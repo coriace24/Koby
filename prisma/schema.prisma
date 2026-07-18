@@ -1,0 +1,74 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String     @id @default(cuid())
+  email        String     @unique
+  name         String
+  passwordHash String
+  createdAt    DateTime   @default(now())
+  analyses     Analysis[]
+}
+
+model Analysis {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Step 1: property inputs
+  address       String
+  purchasePrice Float
+  units         Int
+  propertyType  String
+  yearBuilt     Int
+  occupancy     Float // percent, 0-100
+
+  // Financing assumptions
+  loanAmount    Float
+  interestRate  Float // annual percent
+  loanTermYears Int
+  downPayment   Float
+
+  // Optional inputs
+  renovationBudget Float?
+  targetReturn     Float? // target cash-on-cash percent
+  strategy         String?
+  notes            String?
+
+  // Value-add assumptions (editable)
+  marketRentPerUnit    Float? // assumed achievable market rent $/unit/month
+  renoCostPerUnit      Float?
+  renoUnitCount        Int?
+  renoRentIncrease     Float? // expected $/unit/month increase after renovation
+  exitCapRate          Float? // percent, for value impact estimates
+  vacancyAssumption    Float? // percent override used in stabilized projections
+
+  // AI outputs (JSON strings)
+  extraction String? // extracted income/expense line items with sources + data flags
+  aiSummary  String? // overview, opportunities, risks, summary text
+
+  status    String   @default("DRAFT") // DRAFT | DOCUMENTS_UPLOADED | ANALYZING | NEEDS_REVIEW | COMPLETED | FAILED
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  documents Document[]
+}
+
+model Document {
+  id         String   @id @default(cuid())
+  analysisId String
+  analysis   Analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+
+  filename  String
+  mimeType  String
+  docType   String // RENT_ROLL | T12 | OFFERING_MEMO | TAX | INSURANCE | UTILITY | LEASE | FINANCIAL | OTHER
+  size      Int
+  path      String
+  createdAt DateTime @default(now())
+}
