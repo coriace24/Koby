@@ -56,6 +56,12 @@ Open http://localhost:3000, register an account, and create your first analysis.
 | `ANTHROPIC_API_KEY` | Anthropic API key. Without it, uploads and the underwriting math still work, but AI extraction/summaries return a configuration error |
 | `ANTHROPIC_MODEL` | Optional model override (default `claude-opus-4-8`) |
 
+## Try it with sample data
+
+The [`samples/`](samples/) folder contains a ready-made test kit: an example rent roll and
+T-12 for a fictional 15-unit property, plus a step-by-step walkthrough with the exact
+inputs to enter and the results to expect. Start there.
+
 ## How an analysis flows
 
 1. **Create** the analysis with property + financing inputs.
