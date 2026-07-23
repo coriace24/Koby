@@ -2,7 +2,11 @@ import Anthropic from "@anthropic-ai/sdk";
 import fs from "fs";
 import * as XLSX from "xlsx";
 
-const MODEL = process.env.ANTHROPIC_MODEL || "claude-opus-4-8";
+const DEFAULT_MODEL = process.env.ANTHROPIC_MODEL || "claude-opus-4-8";
+
+function resolveModel(override?: string | null): string {
+  return override && override.trim() ? override : DEFAULT_MODEL;
+}
 
 export function aiConfigured(): boolean {
   return Boolean(process.env.ANTHROPIC_API_KEY);
@@ -190,7 +194,7 @@ Rules:
 - rentRoll.averageRentPerUnit is the average in-place monthly rent per occupied unit from the rent roll.
 - Do not invent numbers. Prefer the most recent trailing-12 data when multiple periods exist.`;
 
-export async function extractFromDocuments(docs: DocInput[]): Promise<Extraction> {
+export async function extractFromDocuments(docs: DocInput[], model?: string | null): Promise<Extraction> {
   const client = getClient();
 
   const content: Anthropic.ContentBlockParam[] = [];
@@ -201,7 +205,7 @@ export async function extractFromDocuments(docs: DocInput[]): Promise<Extraction
   });
 
   const response = await client.messages.create({
-    model: MODEL,
+    model: resolveModel(model),
     max_tokens: 16000,
     thinking: { type: "adaptive" },
     system: EXTRACTION_SYSTEM,
@@ -247,11 +251,11 @@ Strict rules:
 - assumptionNotes: list the key assumptions that drive the results and what happens if they change.
 - summary: a short closing paragraph that reminds the user to verify AI-generated information before using it for investment decisions.`;
 
-export async function generateSummary(context: string): Promise<AiSummary> {
+export async function generateSummary(context: string, model?: string | null): Promise<AiSummary> {
   const client = getClient();
 
   const response = await client.messages.create({
-    model: MODEL,
+    model: resolveModel(model),
     max_tokens: 8000,
     thinking: { type: "adaptive" },
     system: SUMMARY_SYSTEM,

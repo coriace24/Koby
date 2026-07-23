@@ -25,6 +25,28 @@ export interface FinancingInputs {
   interestRate: number; // annual percent, e.g. 6.5
   loanTermYears: number;
   downPayment: number;
+  closingCosts?: number;
+  carryingCosts?: number;
+}
+
+export interface CashNeeded {
+  downPayment: number;
+  closingCosts: number;
+  carryingCosts: number;
+  renovationBudget: number;
+  total: number;
+}
+
+export function cashNeeded(f: FinancingInputs, renovationBudget = 0): CashNeeded {
+  const closing = f.closingCosts ?? 0;
+  const carrying = f.carryingCosts ?? 0;
+  return {
+    downPayment: f.downPayment,
+    closingCosts: closing,
+    carryingCosts: carrying,
+    renovationBudget,
+    total: f.downPayment + closing + carrying + renovationBudget,
+  };
 }
 
 export interface UnderwritingResult {
@@ -86,7 +108,9 @@ export function underwrite(
   const mPay = monthlyPayment(financing.loanAmount, financing.interestRate, financing.loanTermYears);
   const annualDebt = mPay * 12;
 
-  const equity = financing.downPayment + renovationBudget;
+  // Cash-on-cash uses total cash needed (down payment + closing + carrying + reno),
+  // mirroring the reference deal calculator.
+  const equity = cashNeeded(financing, renovationBudget).total;
   const cashFlow = noi - annualDebt;
 
   const gpi = income.grossPotentialRent + income.otherIncome;
@@ -105,6 +129,73 @@ export function underwrite(
     expenseRatio: egi > 0 ? (opex / egi) * 100 : null,
     breakEvenOccupancy: gpi > 0 ? ((opex + annualDebt) / gpi) * 100 : null,
   };
+}
+
+// ---------- Deal-calculator additions (from the reference Excel calculator) ----------
+
+export interface UnitMixRow {
+  label: string; // e.g. "2BR/1BA"
+  count: number;
+  rent: number; // $/unit/month
+  fee: number; // NNN / utility fee, $/unit/month
+}
+
+export function unitMixMonthlyRent(rows: UnitMixRow[]): number {
+  return rows.reduce((sum, r) => sum + (r.count || 0) * ((r.rent || 0) + (r.fee || 0)), 0);
+}
+
+export interface CapRateValuationRow {
+  capRatePct: number;
+  impliedValue: number; // NOI / cap rate
+  vsAsking: number | null; // impliedValue - askingPrice
+  vsOffer: number; // impliedValue - offer (purchase price)
+}
+
+// "What is this property worth at an X% cap?" — the calculator's CAP Rates table.
+export function capRateValuation(
+  noi: number,
+  bands: number[],
+  offer: number,
+  asking: number | null
+): CapRateValuationRow[] {
+  return bands
+    .filter((b) => b > 0)
+    .map((b) => {
+      const value = noi / (b / 100);
+      return {
+        capRatePct: b,
+        impliedValue: value,
+        vsAsking: asking !== null && asking > 0 ? value - asking : null,
+        vsOffer: value - offer,
+      };
+    });
+}
+
+export interface RentSensitivityRow {
+  monthlyRentDelta: number; // -delta | 0 | +delta
+  effectiveMonthlyIncome: number;
+  annualCashFlow: number;
+  cashOnCash: number | null; // percent
+}
+
+// The calculator's "What If?" table: cash-on-cash at rent -Δ / base / +Δ per month.
+export function rentSensitivity(
+  baseMonthlyIncome: number, // effective gross income / 12
+  delta: number,
+  monthlyOpex: number,
+  monthlyDebt: number,
+  totalCashNeeded: number
+): RentSensitivityRow[] {
+  return [-delta, 0, delta].map((d) => {
+    const income = baseMonthlyIncome + d;
+    const annualCf = (income - monthlyOpex - monthlyDebt) * 12;
+    return {
+      monthlyRentDelta: d,
+      effectiveMonthlyIncome: income,
+      annualCashFlow: annualCf,
+      cashOnCash: totalCashNeeded > 0 ? (annualCf / totalCashNeeded) * 100 : null,
+    };
+  });
 }
 
 // ---------- Value-add analysis ----------

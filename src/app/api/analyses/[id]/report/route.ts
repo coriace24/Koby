@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import PDFDocument from "pdfkit";
 import { prisma } from "@/lib/db";
 import { getSessionUserId } from "@/lib/auth";
-import { computeMetrics, parseExtraction } from "@/lib/metrics";
+import { computeMetrics, parseExtraction, parseCapRateBands } from "@/lib/metrics";
+import { getOrCreateSettings } from "@/lib/settings";
 import type { AiSummary } from "@/lib/ai";
 
 const money = (n: number | null | undefined) =>
@@ -21,8 +22,12 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
   const analysis = await prisma.analysis.findFirst({ where: { id, userId } });
   if (!analysis) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+  const settings = await getOrCreateSettings(userId);
   const extraction = parseExtraction(analysis);
-  const metrics = computeMetrics(analysis, extraction);
+  const metrics = computeMetrics(analysis, extraction, {
+    capRateBands: parseCapRateBands(settings.capRateBands),
+    whatIfRentDelta: settings.whatIfRentDelta,
+  });
   const summary: AiSummary | null = analysis.aiSummary ? JSON.parse(analysis.aiSummary) : null;
 
   const doc = new PDFDocument({ size: "LETTER", margins: { top: 54, bottom: 54, left: 54, right: 54 } });
@@ -60,7 +65,22 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
   if (analysis.strategy) kv("Strategy", analysis.strategy);
 
   if (metrics) {
+    heading("Acquisition & Cash Needed");
+    if (analysis.askingPrice) kv("Asking Price", money(analysis.askingPrice));
+    kv("Offer / Purchase Price", money(analysis.purchasePrice));
+    if (metrics.pricePerUnit) kv("Price per Unit", money(metrics.pricePerUnit));
+    kv("Down Payment", money(metrics.cashNeeded.downPayment));
+    kv("Closing Costs", money(metrics.cashNeeded.closingCosts));
+    kv("Carrying Costs", money(metrics.cashNeeded.carryingCosts));
+    kv("Renovation Budget", money(metrics.cashNeeded.renovationBudget));
+    kv("Total Cash Needed", money(metrics.cashNeeded.total));
+
     heading("Underwriting Results");
+    if (metrics.dataSource === "manual") {
+      doc.font("Helvetica-Oblique").text(
+        "Figures below are based on manually entered deal-calculator inputs (no documents analyzed yet).");
+      doc.font("Helvetica");
+    }
     kv("Effective Gross Income", money(metrics.base.effectiveGrossIncome));
     kv("Operating Expenses", money(metrics.base.totalOperatingExpenses));
     kv("Net Operating Income (NOI)", money(metrics.base.noi));
@@ -71,6 +91,24 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
     kv("Equity Requirement", money(metrics.base.equityRequirement));
     kv("Cash-on-Cash Return", pct(metrics.base.cashOnCashReturn));
     kv("Break-even Occupancy", pct(metrics.base.breakEvenOccupancy, 1));
+    doc.moveDown(0.4);
+    doc.font("Helvetica-Bold").text("Valuation at Selected Cap Rates");
+    for (const row of metrics.capRateMatrix) {
+      const vs = row.vsAsking !== null
+        ? ` (${row.vsAsking >= 0 ? "+" : ""}${money(row.vsAsking)} vs asking)`
+        : ` (${row.vsOffer >= 0 ? "+" : ""}${money(row.vsOffer)} vs offer)`;
+      kv(`Value at ${row.capRatePct.toFixed(1)}% cap`, money(row.impliedValue) + vs);
+    }
+
+    doc.moveDown(0.4);
+    doc.font("Helvetica-Bold").text("Rent Sensitivity (What If?)");
+    for (const s of metrics.sensitivity) {
+      const label = s.monthlyRentDelta === 0
+        ? "Base"
+        : `${s.monthlyRentDelta > 0 ? "+" : ""}${money(s.monthlyRentDelta)}/mo`;
+      kv(label, `${money(s.annualCashFlow)} cash flow · ${pct(s.cashOnCash)} CoC`);
+    }
+
     if (metrics.stabilized) {
       doc.moveDown(0.4);
       doc.font("Helvetica-Bold").text("Stabilized (Value-Add) Projection");

@@ -1,7 +1,8 @@
 # Koby — Test Kit
 
 Everything you need to test the app end to end with realistic (but fictional) data for
-**Maple Court Apartments**, a 15-unit property at 1428 Maple Court, Springfield, IL.
+**Maple Court Apartments**, a 15-unit property at 1428 Maple Court, Springfield, IL —
+plus a documents-free test of the built-in **deal calculator** (Test B below).
 
 | File | Upload as | What's inside |
 | --- | --- | --- |
@@ -17,7 +18,7 @@ Everything you need to test the app end to end with realistic (but fictional) da
   (console.anthropic.com → Plans & Billing). Without credits the AI step fails with a
   "credit balance is too low" error.
 
-## Test walkthrough
+## Test A — full AI document workflow
 
 ### 1. Register / sign in
 
@@ -42,6 +43,11 @@ Click **+ New property analysis** and enter:
 | Renovation budget (optional) | 50000 |
 | Target cash-on-cash (optional) | 8 |
 | Strategy (optional) | Value-add |
+
+Leave *Asking price* and *Est. closing costs* blank the first time — closing costs
+auto-fill from your Settings default (1% of price unless you changed it). Note that
+cash-on-cash uses **total cash needed** (down payment + closing + carrying + renovation),
+so figures are slightly more conservative than a down-payment-only calculation.
 
 ### 3. Upload the documents
 
@@ -86,10 +92,74 @@ written summary to reflect the new assumptions.
 In **Extracted financials**, click any amount, type a new value, and watch the metrics
 recalculate. Overridden values are marked "User override".
 
-### 7. Export the report
+### 7. Check the valuation & sensitivity cards
 
-Click **Export PDF report** (top right) — a professional investment summary including the
-metrics, value-add analysis, AI narrative, data flags, and the verification disclaimer.
+On the same page:
+
+- **Valuation at cap rates** — what the property is worth at each cap-rate band
+  (default 6/7/8%, configurable in Settings), compared against asking/offer.
+- **What if? — rent sensitivity** — cash-on-cash if effective monthly income moves
+  by ± the step from Settings (default $500/month).
+
+### 8. Export the report
+
+Click **Export PDF report** (top right) — a professional investment summary including
+cash needed, the metrics, valuation matrix, rent sensitivity, value-add analysis, AI
+narrative, data flags, and the verification disclaimer.
+
+## Test B — deal calculator (no documents, no AI, instant)
+
+This reproduces the reference Excel deal calculator exactly. Create a new analysis:
+
+| Field | Value |
+| --- | --- |
+| Property address | 18th and Wayne (calculator example) |
+| Asking price | 1300000 |
+| Offer / purchase price | 1000000 |
+| Number of units | 8 |
+| Property type | Multifamily |
+| Year built | 1950 |
+| Current occupancy (%) | 100 |
+| Loan amount | 800000 |
+| Interest rate (%) | 6.5 |
+| Loan term (years) | 25 |
+| Down payment | 200000 |
+| Est. closing costs | 10000 |
+| Vacancy assumption (%) | 5 |
+
+Then in the **Deal calculator** section (no documents needed):
+
+1. Add a unit-mix row: label `All units`, count `8`, rent `1350`, fee `0`
+2. Enter annual operating costs: property taxes `24000`, insurance `7000`,
+   repairs `8000`, landscaping `4800`, misc `1000` (leave the rest 0 — total $44,800)
+3. Click **Save & calculate**
+
+Expected results (identical to the Excel template):
+
+| Metric | Value |
+| --- | --- |
+| Monthly debt service | $5,401.66 |
+| NOI | $78,320 |
+| Cap rate (on offer) | 7.83% |
+| DSCR | 1.21 |
+| Total cash needed | $210,000 |
+| Cash-on-cash | 6.43% |
+| What-if −$500 / base / +$500 | 3.57% / 6.43% / 9.29% |
+| Value at 6% / 7% / 8% cap | $1,305,333 / $1,118,857 / $979,000 |
+
+The valuation table shows the property is only worth its $1.3M asking at a 6% cap —
+at 8% it's worth ~$979K, which is why the calculator's example offer was $1M.
+
+## Settings to try
+
+Open **Settings** in the top navigation:
+
+- **Claude model** — switch between Opus (most capable), Sonnet (cheaper), Haiku (cheapest)
+- **Underwriting defaults** — vacancy %, closing-cost %, interest rate, loan term
+  (pre-fill new analyses)
+- **Cap-rate bands** — e.g. `5.5,6.5,7.5` changes the valuation table everywhere
+- **What-if rent step** — e.g. `250` tightens the sensitivity scenarios
+- **Profile** — change your name or password
 
 ## Troubleshooting
 

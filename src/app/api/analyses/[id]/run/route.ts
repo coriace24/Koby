@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getSessionUserId } from "@/lib/auth";
 import { aiConfigured, extractFromDocuments, generateSummary } from "@/lib/ai";
-import { computeMetrics, parseExtraction } from "@/lib/metrics";
+import { computeMetrics, parseExtraction, parseCapRateBands } from "@/lib/metrics";
+import { getOrCreateSettings } from "@/lib/settings";
 
 export const maxDuration = 300;
 
@@ -35,6 +36,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
   await prisma.analysis.update({ where: { id }, data: { status: "ANALYZING" } });
 
+  const settings = await getOrCreateSettings(userId);
+  const metricsOpts = {
+    capRateBands: parseCapRateBands(settings.capRateBands),
+    whatIfRentDelta: settings.whatIfRentDelta,
+  };
+
   try {
     // Step 1: AI extraction from documents (skippable via ?skipExtraction=1 when re-summarizing)
     const skipExtraction =
@@ -48,7 +55,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           mimeType: d.mimeType,
           docType: d.docType,
           path: d.path,
-        }))
+        })),
+        settings.aiModel
       );
       await prisma.analysis.update({
         where: { id },
@@ -58,7 +66,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     // Step 2: deterministic underwriting engine
     const fresh = await prisma.analysis.findUniqueOrThrow({ where: { id } });
-    const metrics = computeMetrics(fresh, extraction);
+    const metrics = computeMetrics(fresh, extraction, metricsOpts);
 
     // Step 3: AI summary grounded in the computed figures
     const context = JSON.stringify(
@@ -96,7 +104,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       2
     );
 
-    const summary = await generateSummary(context);
+    const summary = await generateSummary(context, settings.aiModel);
 
     const needsReview = extraction.dataFlags.some(
       (f) => f.severity === "warning" || f.severity === "critical"

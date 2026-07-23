@@ -1,10 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getSessionUserId } from "@/lib/auth";
-import { computeMetrics, parseExtraction } from "@/lib/metrics";
+import { computeMetrics, parseExtraction, parseCapRateBands, type MetricsOptions } from "@/lib/metrics";
+import { getOrCreateSettings } from "@/lib/settings";
 
 async function getOwnedAnalysis(id: string, userId: string) {
   return prisma.analysis.findFirst({ where: { id, userId }, include: { documents: true } });
+}
+
+async function metricsOptions(userId: string): Promise<MetricsOptions> {
+  const s = await getOrCreateSettings(userId);
+  return { capRateBands: parseCapRateBands(s.capRateBands), whatIfRentDelta: s.whatIfRentDelta };
 }
 
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -16,15 +22,16 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
   if (!analysis) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const extraction = parseExtraction(analysis);
-  const metrics = computeMetrics(analysis, extraction);
+  const metrics = computeMetrics(analysis, extraction, await metricsOptions(userId));
   const aiSummary = analysis.aiSummary ? JSON.parse(analysis.aiSummary) : null;
 
   return NextResponse.json({ ...analysis, extractionParsed: extraction, metrics, aiSummaryParsed: aiSummary });
 }
 
 const EDITABLE_NUMERIC = [
-  "purchasePrice", "units", "yearBuilt", "occupancy",
+  "purchasePrice", "askingPrice", "units", "yearBuilt", "occupancy",
   "loanAmount", "interestRate", "loanTermYears", "downPayment",
+  "closingCosts", "carryingCosts", "otherIncomeMonthly",
   "renovationBudget", "targetReturn",
   "marketRentPerUnit", "renoCostPerUnit", "renoUnitCount", "renoRentIncrease",
   "exitCapRate", "vacancyAssumption",
@@ -65,9 +72,26 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   if (typeof b.extraction === "string") data.extraction = b.extraction;
   if (b.extraction && typeof b.extraction === "object") data.extraction = JSON.stringify(b.extraction);
 
+  // Manual deal-calculator inputs
+  if (Array.isArray(b.unitMix)) {
+    const rows = b.unitMix
+      .filter((r: unknown) => r && typeof r === "object")
+      .slice(0, 40)
+      .map((r: Record<string, unknown>) => ({
+        label: typeof r.label === "string" ? r.label.slice(0, 60) : "",
+        count: Math.max(0, Math.round(Number(r.count) || 0)),
+        rent: Math.max(0, Number(r.rent) || 0),
+        fee: Math.max(0, Number(r.fee) || 0),
+      }));
+    data.unitMix = rows.length > 0 ? JSON.stringify(rows) : null;
+  }
+  if (b.manualOpex && typeof b.manualOpex === "object") {
+    data.manualOpex = JSON.stringify(b.manualOpex);
+  }
+
   const updated = await prisma.analysis.update({ where: { id }, data, include: { documents: true } });
   const extraction = parseExtraction(updated);
-  const metrics = computeMetrics(updated, extraction);
+  const metrics = computeMetrics(updated, extraction, await metricsOptions(userId));
   const aiSummary = updated.aiSummary ? JSON.parse(updated.aiSummary) : null;
   return NextResponse.json({ ...updated, extractionParsed: extraction, metrics, aiSummaryParsed: aiSummary });
 }

@@ -8,12 +8,28 @@ datasource db {
 }
 
 model User {
-  id           String     @id @default(cuid())
-  email        String     @unique
+  id           String        @id @default(cuid())
+  email        String        @unique
   name         String
   passwordHash String
-  createdAt    DateTime   @default(now())
+  createdAt    DateTime      @default(now())
   analyses     Analysis[]
+  settings     UserSettings?
+}
+
+model UserSettings {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  aiModel               String? // null = server default (ANTHROPIC_MODEL env)
+  defaultVacancyPct     Float   @default(5)
+  defaultClosingCostPct Float   @default(1)
+  defaultInterestRate   Float   @default(6.5)
+  defaultLoanTermYears  Int     @default(30)
+  defaultDownPaymentPct Float   @default(25)
+  capRateBands          String  @default("6,7,8") // comma-separated percents for the valuation matrix
+  whatIfRentDelta       Float   @default(500) // $/month step for rent sensitivity
 }
 
 model Analysis {
@@ -23,11 +39,16 @@ model Analysis {
 
   // Step 1: property inputs
   address       String
-  purchasePrice Float
+  purchasePrice Float // the OFFER amount used for underwriting
+  askingPrice   Float? // seller's asking price, for offer-vs-asking comparison
   units         Int
   propertyType  String
   yearBuilt     Int
   occupancy     Float // percent, 0-100
+
+  // Acquisition costs (cash-needed calculation)
+  closingCosts  Float? // defaults to settings.defaultClosingCostPct% of offer at creation
+  carryingCosts Float?
 
   // Financing assumptions
   loanAmount    Float
@@ -48,6 +69,11 @@ model Analysis {
   renoRentIncrease     Float? // expected $/unit/month increase after renovation
   exitCapRate          Float? // percent, for value impact estimates
   vacancyAssumption    Float? // percent override used in stabilized projections
+
+  // Manual deal-calculator inputs (JSON strings) — used when no documents are analyzed yet
+  unitMix            String? // [{label, count, rent, fee}] — per-unit-type monthly rents
+  manualOpex         String? // {propertyTaxes, insurance, ...} — annual estimates
+  otherIncomeMonthly Float? // laundry/parking/etc, $/month (manual mode)
 
   // AI outputs (JSON strings)
   extraction String? // extracted income/expense line items with sources + data flags

@@ -9,9 +9,19 @@ Koby assists real estate professionals — it does not replace professional judg
 AI-generated information must be reviewed and verified before being used for investment
 decisions.
 
-## Features (MVP)
+## Features
 
-- **Accounts & dashboard** — email/password login; active and completed analyses at a glance.
+- **Accounts & dashboard** — email/password login; portfolio snapshot (deals, units,
+  combined value, average cap rate and cash flow) plus analysis status tracking.
+- **Deal calculator (no documents needed)** — modeled on a proven investor Excel
+  calculator: unit-mix rent builder with NNN/utility fees, quick annual operating-cost
+  estimator, total-cash-needed (down payment + closing + carrying + renovation),
+  cap-rate valuation matrix ("what is it worth at 6/7/8%?") vs asking price, and a
+  what-if rent sensitivity table. Instant results; AI-extracted figures take over once
+  documents are analyzed.
+- **Settings** — choose the Claude model (Opus/Sonnet/Haiku), set underwriting defaults
+  (vacancy, closing-cost %, interest rate, loan term), configure cap-rate bands and the
+  what-if step, change your name/password.
 - **Create property analysis** — address, purchase price, units, property type, year built,
   occupancy, and financing assumptions; optional renovation budget, target return, strategy,
   and free-form notes.

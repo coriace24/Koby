@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import StatusBadge from "./StatusBadge";
+import PageShell from "./PageShell";
 
 // ---------- Types mirrored from the API ----------
 
@@ -17,7 +18,35 @@ interface Extraction {
   rentRoll: { unitCount: number; averageRentPerUnit: number; occupancyPct: number };
   dataFlags: { severity: string; message: string }[];
 }
+interface UnitMixRow {
+  label: string;
+  count: number;
+  rent: number;
+  fee: number;
+}
 interface Metrics {
+  dataSource: "documents" | "manual";
+  cashNeeded: {
+    downPayment: number;
+    closingCosts: number;
+    carryingCosts: number;
+    renovationBudget: number;
+    total: number;
+  };
+  capRateMatrix: {
+    capRatePct: number;
+    impliedValue: number;
+    vsAsking: number | null;
+    vsOffer: number;
+  }[];
+  sensitivity: {
+    monthlyRentDelta: number;
+    effectiveMonthlyIncome: number;
+    annualCashFlow: number;
+    cashOnCash: number | null;
+  }[];
+  pricePerUnit: number | null;
+  askingPricePerUnit: number | null;
   base: {
     effectiveGrossIncome: number;
     totalOperatingExpenses: number;
@@ -69,6 +98,12 @@ interface AnalysisData {
   address: string;
   propertyType: string;
   purchasePrice: number;
+  askingPrice: number | null;
+  closingCosts: number | null;
+  carryingCosts: number | null;
+  otherIncomeMonthly: number | null;
+  unitMix: string | null;
+  manualOpex: string | null;
   units: number;
   yearBuilt: number;
   occupancy: number;
@@ -145,6 +180,18 @@ function Stat({ label, value, accent }: { label: string; value: string; accent?:
   );
 }
 
+const OPEX_FIELDS: [string, string][] = [
+  ["propertyTaxes", "Property taxes"],
+  ["insurance", "Insurance"],
+  ["utilities", "Utilities"],
+  ["repairsMaintenance", "Repairs / maint / turns"],
+  ["managementFees", "Management fees"],
+  ["payroll", "Payroll"],
+  ["landscaping", "Landscaping / CAM"],
+  ["administrative", "Administrative"],
+  ["other", "Misc / cap-ex holdback"],
+];
+
 export default function AnalysisDetail({ id }: { id: string }) {
   const router = useRouter();
   const [data, setData] = useState<AnalysisData | null>(null);
@@ -152,13 +199,21 @@ export default function AnalysisDetail({ id }: { id: string }) {
   const [running, setRunning] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [savingAssumptions, setSavingAssumptions] = useState(false);
+  const [mixRows, setMixRows] = useState<UnitMixRow[]>([]);
+  const [savingCalc, setSavingCalc] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const docTypeRef = useRef<HTMLSelectElement>(null);
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/analyses/${id}`);
     if (res.ok) {
-      setData(await res.json());
+      const d: AnalysisData = await res.json();
+      setData(d);
+      try {
+        setMixRows(d.unitMix ? JSON.parse(d.unitMix) : []);
+      } catch {
+        setMixRows([]);
+      }
     } else if (res.status === 404) {
       setError("Analysis not found.");
     } else {
@@ -169,6 +224,35 @@ export default function AnalysisDetail({ id }: { id: string }) {
   useEffect(() => {
     load();
   }, [load]);
+
+  async function saveCalculator(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setSavingCalc(true);
+    setError(null);
+    const fd = new FormData(e.currentTarget);
+    const manualOpex: Record<string, number> = {};
+    for (const [key] of OPEX_FIELDS) {
+      manualOpex[key] = parseFloat(String(fd.get(`opex_${key}`) || "0")) || 0;
+    }
+    const body = {
+      unitMix: mixRows.filter((r) => r.count > 0 || r.rent > 0 || r.label),
+      manualOpex,
+      otherIncomeMonthly: fd.get("otherIncomeMonthly") || null,
+    };
+    const res = await fetch(`/api/analyses/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) {
+      const d = await res.json();
+      setData(d);
+    } else {
+      const d = await res.json().catch(() => ({}));
+      setError(d.error ?? "Failed to save calculator inputs.");
+    }
+    setSavingCalc(false);
+  }
 
   async function upload(e: React.FormEvent) {
     e.preventDefault();
@@ -274,8 +358,19 @@ export default function AnalysisDetail({ id }: { id: string }) {
   const m = data.metrics;
   const ai = data.aiSummaryParsed;
   const ex = data.extractionParsed;
+  let manualOpexDefaults: Record<string, number> = {};
+  try {
+    manualOpexDefaults = data.manualOpex ? JSON.parse(data.manualOpex) : {};
+  } catch {
+    manualOpexDefaults = {};
+  }
+  const mixMonthlyTotal = mixRows.reduce(
+    (sum, r) => sum + (r.count || 0) * ((r.rent || 0) + (r.fee || 0)),
+    0
+  );
 
   return (
+    <PageShell>
     <main className="max-w-5xl mx-auto w-full px-6 py-8 flex-1 space-y-6">
       <div>
         <Link href="/" className="text-sm text-blue-700 hover:underline">
@@ -364,10 +459,183 @@ export default function AnalysisDetail({ id }: { id: string }) {
         </div>
       </section>
 
+      {/* Deal calculator (manual mode) */}
+      <section className={card}>
+        <h2 className="font-semibold mb-1">Deal calculator</h2>
+        <p className="text-xs text-slate-500 mb-4">
+          Get instant underwriting without documents: build the rent from your unit mix and estimate
+          annual operating costs. Once you upload documents and run the AI analysis, the extracted
+          figures take over{ex ? " (currently active)" : ""}.
+        </p>
+        <form onSubmit={saveCalculator}>
+          <h3 className="text-sm font-medium text-slate-500 mb-2">Unit mix & rents ($/month)</h3>
+          <table className="w-full text-sm mb-2">
+            <thead>
+              <tr className="text-left text-xs text-slate-400">
+                <th className="pb-1">Unit type</th>
+                <th className="pb-1 w-20"># Units</th>
+                <th className="pb-1 w-28">Rent</th>
+                <th className="pb-1 w-28">NNN/utility fee</th>
+                <th className="pb-1 w-28 text-right">Monthly total</th>
+                <th className="w-8"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {mixRows.map((r, i) => (
+                <tr key={i} className="border-t border-slate-100">
+                  <td className="py-1 pr-2">
+                    <input
+                      className="w-full rounded border border-slate-200 px-2 py-1"
+                      value={r.label}
+                      placeholder="e.g. 2BR/1BA"
+                      onChange={(e) =>
+                        setMixRows(mixRows.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))
+                      }
+                    />
+                  </td>
+                  <td className="py-1 pr-2">
+                    <input
+                      type="number" min="0" step="1"
+                      className="w-full rounded border border-slate-200 px-2 py-1"
+                      value={r.count || ""}
+                      onChange={(e) =>
+                        setMixRows(mixRows.map((x, j) => (j === i ? { ...x, count: parseInt(e.target.value) || 0 } : x)))
+                      }
+                    />
+                  </td>
+                  <td className="py-1 pr-2">
+                    <input
+                      type="number" min="0" step="any"
+                      className="w-full rounded border border-slate-200 px-2 py-1"
+                      value={r.rent || ""}
+                      onChange={(e) =>
+                        setMixRows(mixRows.map((x, j) => (j === i ? { ...x, rent: parseFloat(e.target.value) || 0 } : x)))
+                      }
+                    />
+                  </td>
+                  <td className="py-1 pr-2">
+                    <input
+                      type="number" min="0" step="any"
+                      className="w-full rounded border border-slate-200 px-2 py-1"
+                      value={r.fee || ""}
+                      onChange={(e) =>
+                        setMixRows(mixRows.map((x, j) => (j === i ? { ...x, fee: parseFloat(e.target.value) || 0 } : x)))
+                      }
+                    />
+                  </td>
+                  <td className="py-1 text-right font-medium">
+                    {money((r.count || 0) * ((r.rent || 0) + (r.fee || 0)))}
+                  </td>
+                  <td className="py-1 text-right">
+                    <button
+                      type="button"
+                      onClick={() => setMixRows(mixRows.filter((_, j) => j !== i))}
+                      className="text-red-500 hover:text-red-700"
+                      title="Remove row"
+                    >
+                      ×
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              <tr className="border-t border-slate-200">
+                <td colSpan={4} className="py-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setMixRows([...mixRows, { label: "", count: 1, rent: 0, fee: 0 }])}
+                    className="text-sm text-blue-700 hover:underline"
+                  >
+                    + Add unit type
+                  </button>
+                </td>
+                <td className="py-1.5 text-right font-semibold">{money(mixMonthlyTotal)}</td>
+                <td></td>
+              </tr>
+            </tbody>
+          </table>
+          <div className="grid sm:grid-cols-3 gap-4 mb-4">
+            <div>
+              <label className="block text-xs font-medium mb-1">Other income ($/month)</label>
+              <input
+                name="otherIncomeMonthly" type="number" min="0" step="any"
+                defaultValue={data.otherIncomeMonthly ?? ""}
+                placeholder="Laundry, parking, pets…"
+                className={inputCls}
+              />
+            </div>
+            <div className="sm:col-span-2 text-xs text-slate-500 self-end pb-2">
+              A vacancy haircut of {data.vacancyAssumption ?? 5}% (editable in Assumptions) is applied to
+              the unit-mix rent.
+            </div>
+          </div>
+
+          <h3 className="text-sm font-medium text-slate-500 mb-2">
+            Approximate annual operating costs ($/year)
+          </h3>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
+            {OPEX_FIELDS.map(([key, lbl]) => (
+              <div key={key}>
+                <label className="block text-xs font-medium mb-1">{lbl}</label>
+                <input
+                  name={`opex_${key}`} type="number" min="0" step="any"
+                  defaultValue={manualOpexDefaults[key] ?? ""}
+                  className={inputCls}
+                />
+              </div>
+            ))}
+          </div>
+          <button
+            type="submit"
+            disabled={savingCalc}
+            className="rounded-md bg-slate-800 text-white px-5 py-2 text-sm hover:bg-slate-900 disabled:opacity-50"
+          >
+            {savingCalc ? "Calculating…" : "Save & calculate"}
+          </button>
+        </form>
+      </section>
+
+      {/* Acquisition & cash needed */}
+      {m && (
+        <section className={card}>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="font-semibold">Acquisition & cash needed</h2>
+            {m.dataSource === "manual" && (
+              <span className="text-xs rounded-full bg-slate-100 text-slate-600 px-2.5 py-0.5">
+                Based on deal-calculator inputs
+              </span>
+            )}
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {data.askingPrice !== null && <Stat label="Asking price" value={money(data.askingPrice)} />}
+            <Stat label="Offer / purchase price" value={money(data.purchasePrice)} />
+            {m.pricePerUnit !== null && <Stat label="Offer per unit" value={money(m.pricePerUnit)} />}
+            {m.askingPricePerUnit !== null && (
+              <Stat label="Asking per unit" value={money(m.askingPricePerUnit)} />
+            )}
+            <Stat label="Down payment" value={money(m.cashNeeded.downPayment)} />
+            <Stat label="Closing costs" value={money(m.cashNeeded.closingCosts)} />
+            <Stat label="Carrying costs" value={money(m.cashNeeded.carryingCosts)} />
+            <Stat label="Renovation budget" value={money(m.cashNeeded.renovationBudget)} />
+            <Stat label="Total cash needed" value={money(m.cashNeeded.total)} accent />
+          </div>
+          {data.askingPrice !== null && (
+            <p className="text-sm text-slate-600 mt-3">
+              Offer is {money(Math.abs(data.purchasePrice - data.askingPrice))}{" "}
+              {data.purchasePrice <= data.askingPrice ? "below" : "above"} asking.
+            </p>
+          )}
+        </section>
+      )}
+
       {/* Underwriting results */}
       {m && (
         <section className={card}>
-          <h2 className="font-semibold mb-4">Underwriting results</h2>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="font-semibold">Underwriting results</h2>
+            <span className="text-xs rounded-full bg-slate-100 text-slate-600 px-2.5 py-0.5">
+              {m.dataSource === "documents" ? "From analyzed documents" : "From deal-calculator inputs"}
+            </span>
+          </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <Stat label="NOI (annual)" value={money(m.base.noi)} accent />
             <Stat label="Cap rate" value={pct(m.base.capRate)} accent />
@@ -393,6 +661,78 @@ export default function AnalysisDetail({ id }: { id: string }) {
               based on the assumptions entered.
             </p>
           )}
+        </section>
+      )}
+
+      {/* Valuation & sensitivity */}
+      {m && (
+        <section className={card}>
+          <div className="grid md:grid-cols-2 gap-8">
+            <div>
+              <h2 className="font-semibold mb-1">Valuation at cap rates</h2>
+              <p className="text-xs text-slate-500 mb-3">
+                What the property is worth at each cap rate, given the current NOI of {money(m.base.noi)}.
+                Bands are configurable in Settings.
+              </p>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-xs text-slate-400">
+                    <th className="pb-1">Cap rate</th>
+                    <th className="pb-1 text-right">Implied value</th>
+                    <th className="pb-1 text-right">{data.askingPrice ? "vs asking" : "vs offer"}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {m.capRateMatrix.map((row) => {
+                    const diff = row.vsAsking ?? row.vsOffer;
+                    return (
+                      <tr key={row.capRatePct} className="border-t border-slate-100">
+                        <td className="py-1.5">{row.capRatePct.toFixed(1)}%</td>
+                        <td className="py-1.5 text-right font-medium">{money(row.impliedValue)}</td>
+                        <td className={`py-1.5 text-right ${diff >= 0 ? "text-green-700" : "text-red-600"}`}>
+                          {diff >= 0 ? "+" : "−"}
+                          {money(Math.abs(diff))}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div>
+              <h2 className="font-semibold mb-1">What if? — rent sensitivity</h2>
+              <p className="text-xs text-slate-500 mb-3">
+                Cash-on-cash if effective monthly income moves by the step set in Settings.
+              </p>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-xs text-slate-400">
+                    <th className="pb-1">Scenario</th>
+                    <th className="pb-1 text-right">Monthly income</th>
+                    <th className="pb-1 text-right">Annual cash flow</th>
+                    <th className="pb-1 text-right">CoC</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {m.sensitivity.map((s2) => (
+                    <tr
+                      key={s2.monthlyRentDelta}
+                      className={`border-t border-slate-100 ${s2.monthlyRentDelta === 0 ? "font-medium" : ""}`}
+                    >
+                      <td className="py-1.5">
+                        {s2.monthlyRentDelta === 0
+                          ? "Base"
+                          : `${s2.monthlyRentDelta > 0 ? "+" : "−"}${money(Math.abs(s2.monthlyRentDelta))}/mo`}
+                      </td>
+                      <td className="py-1.5 text-right">{money(s2.effectiveMonthlyIncome)}</td>
+                      <td className="py-1.5 text-right">{money(s2.annualCashFlow)}</td>
+                      <td className="py-1.5 text-right">{pct(s2.cashOnCash, 1)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </section>
       )}
 
@@ -457,6 +797,22 @@ export default function AnalysisDetail({ id }: { id: string }) {
           analysis afterwards to refresh the written summary.
         </p>
         <form onSubmit={saveAssumptions} className="grid sm:grid-cols-3 gap-4">
+          <div>
+            <label className="block text-xs font-medium mb-1">Asking price ($)</label>
+            <input name="askingPrice" type="number" step="any" defaultValue={data.askingPrice ?? ""} className={inputCls} />
+          </div>
+          <div>
+            <label className="block text-xs font-medium mb-1">Offer / purchase price ($)</label>
+            <input name="purchasePrice" type="number" step="any" defaultValue={data.purchasePrice} className={inputCls} />
+          </div>
+          <div>
+            <label className="block text-xs font-medium mb-1">Closing costs ($)</label>
+            <input name="closingCosts" type="number" step="any" defaultValue={data.closingCosts ?? ""} className={inputCls} />
+          </div>
+          <div>
+            <label className="block text-xs font-medium mb-1">Carrying costs ($)</label>
+            <input name="carryingCosts" type="number" step="any" defaultValue={data.carryingCosts ?? ""} className={inputCls} />
+          </div>
           <div>
             <label className="block text-xs font-medium mb-1">Loan amount ($)</label>
             <input name="loanAmount" type="number" step="any" defaultValue={data.loanAmount} className={inputCls} />
@@ -680,5 +1036,6 @@ export default function AnalysisDetail({ id }: { id: string }) {
         presentations, or acquisitions.
       </p>
     </main>
+    </PageShell>
   );
 }

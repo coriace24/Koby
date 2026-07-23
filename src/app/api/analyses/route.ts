@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getSessionUserId } from "@/lib/auth";
+import { getOrCreateSettings } from "@/lib/settings";
 
 export async function GET() {
   const userId = await getSessionUserId();
@@ -55,12 +56,17 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const settings = await getOrCreateSettings(userId);
+  const closingCosts =
+    num(b.closingCosts) ?? Math.round(purchasePrice * (settings.defaultClosingCostPct / 100));
+
   const analysis = await prisma.analysis.create({
     data: {
       userId,
       address,
       propertyType,
       purchasePrice,
+      askingPrice: num(b.askingPrice),
       units: Math.round(units),
       yearBuilt: Math.round(yearBuilt),
       occupancy,
@@ -68,8 +74,11 @@ export async function POST(request: NextRequest) {
       interestRate,
       loanTermYears: Math.round(loanTermYears),
       downPayment,
+      closingCosts,
+      carryingCosts: num(b.carryingCosts),
       renovationBudget: num(b.renovationBudget),
       targetReturn: num(b.targetReturn),
+      vacancyAssumption: num(b.vacancyAssumption) ?? settings.defaultVacancyPct,
       strategy: typeof b.strategy === "string" && b.strategy.trim() ? b.strategy.trim() : null,
       notes: typeof b.notes === "string" && b.notes.trim() ? b.notes.trim() : null,
     },

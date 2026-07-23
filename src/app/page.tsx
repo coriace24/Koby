@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
+import { computeMetrics, parseExtraction } from "@/lib/metrics";
 import Header from "@/components/Header";
 import StatusBadge from "@/components/StatusBadge";
 
@@ -23,6 +24,18 @@ export default async function DashboardPage() {
   const active = analyses.filter((a) => a.status !== "COMPLETED");
   const completed = analyses.filter((a) => a.status === "COMPLETED");
 
+  // Portfolio snapshot across analyses that have computable metrics
+  const withMetrics = analyses
+    .map((a) => ({ a, m: computeMetrics(a, parseExtraction(a)) }))
+    .filter((x) => x.m !== null);
+  const totalUnits = analyses.reduce((s, a) => s + a.units, 0);
+  const totalValue = analyses.reduce((s, a) => s + a.purchasePrice, 0);
+  const avgCap =
+    withMetrics.length > 0
+      ? withMetrics.reduce((s, x) => s + (x.m!.base.capRate || 0), 0) / withMetrics.length
+      : null;
+  const totalCashFlow = withMetrics.reduce((s, x) => s + x.m!.base.cashFlowAfterDebtService, 0);
+
   return (
     <>
       <Header userName={user.name} />
@@ -41,6 +54,34 @@ export default async function DashboardPage() {
             + New property analysis
           </Link>
         </div>
+
+        {analyses.length > 0 && (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+            <div className="bg-white border border-slate-200 rounded-xl p-4">
+              <div className="text-xs text-slate-500">Deals under analysis</div>
+              <div className="text-xl font-semibold">{analyses.length}</div>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-xl p-4">
+              <div className="text-xs text-slate-500">Total units</div>
+              <div className="text-xl font-semibold">{totalUnits}</div>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-xl p-4">
+              <div className="text-xs text-slate-500">Combined offer value</div>
+              <div className="text-xl font-semibold">{money(totalValue)}</div>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-xl p-4">
+              <div className="text-xs text-slate-500">
+                Avg cap rate{totalCashFlow !== 0 ? " · cash flow" : ""}
+              </div>
+              <div className="text-xl font-semibold">
+                {avgCap !== null ? `${avgCap.toFixed(2)}%` : "—"}
+                {withMetrics.length > 0 && (
+                  <span className="text-sm font-normal text-slate-500"> · {money(totalCashFlow)}/yr</span>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {analyses.length === 0 ? (
           <div className="bg-white border border-slate-200 rounded-xl p-12 text-center">
