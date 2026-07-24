@@ -125,6 +125,8 @@ interface AnalysisData {
   documents: Doc[];
   extractionParsed: Extraction | null;
   metrics: Metrics | null;
+  metricsManual: Metrics | null;
+  metricsDocuments: Metrics | null;
   aiSummaryParsed: AiSummary | null;
 }
 
@@ -201,6 +203,8 @@ export default function AnalysisDetail({ id }: { id: string }) {
   const [savingAssumptions, setSavingAssumptions] = useState(false);
   const [mixRows, setMixRows] = useState<UnitMixRow[]>([]);
   const [savingCalc, setSavingCalc] = useState(false);
+  const [tab, setTab] = useState<"manual" | "documents">("manual");
+  const tabInitialized = useRef(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const docTypeRef = useRef<HTMLSelectElement>(null);
 
@@ -209,6 +213,10 @@ export default function AnalysisDetail({ id }: { id: string }) {
     if (res.ok) {
       const d: AnalysisData = await res.json();
       setData(d);
+      if (!tabInitialized.current) {
+        tabInitialized.current = true;
+        setTab(d.extractionParsed || d.documents.length > 0 ? "documents" : "manual");
+      }
       try {
         setMixRows(d.unitMix ? JSON.parse(d.unitMix) : []);
       } catch {
@@ -279,10 +287,10 @@ export default function AnalysisDetail({ id }: { id: string }) {
     await load();
   }
 
-  async function runAnalysis() {
+  async function runAnalysis(mode: "manual" | "documents") {
     setRunning(true);
     setError(null);
-    const res = await fetch(`/api/analyses/${id}/run`, { method: "POST" });
+    const res = await fetch(`/api/analyses/${id}/run?mode=${mode}`, { method: "POST" });
     if (!res.ok) {
       const d = await res.json().catch(() => ({}));
       setError(d.error ?? "Analysis failed.");
@@ -355,7 +363,7 @@ export default function AnalysisDetail({ id }: { id: string }) {
 
   const hasRentRoll = data.documents.some((d) => d.docType === "RENT_ROLL");
   const hasT12 = data.documents.some((d) => d.docType === "T12");
-  const m = data.metrics;
+  const m = tab === "manual" ? data.metricsManual : data.metricsDocuments;
   const ai = data.aiSummaryParsed;
   const ex = data.extractionParsed;
   let manualOpexDefaults: Record<string, number> = {};
@@ -401,7 +409,33 @@ export default function AnalysisDetail({ id }: { id: string }) {
 
       {error && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md p-3">{error}</p>}
 
+      {/* Data-source tabs */}
+      <div className="flex gap-1 border-b border-slate-200">
+        {(
+          [
+            ["manual", "Manual entry"],
+            ["documents", "Uploaded documents"],
+          ] as const
+        ).map(([value, label]) => (
+          <button
+            key={value}
+            onClick={() => setTab(value)}
+            className={`px-4 py-2 text-sm rounded-t-lg border border-b-0 -mb-px ${
+              tab === value
+                ? "bg-white border-slate-200 font-semibold text-blue-800"
+                : "bg-transparent border-transparent text-slate-500 hover:text-slate-800"
+            }`}
+          >
+            {label}
+            {value === "documents" && data.documents.length > 0 && (
+              <span className="ml-1.5 text-xs text-slate-400">({data.documents.length})</span>
+            )}
+          </button>
+        ))}
+      </div>
+
       {/* Documents */}
+      {tab === "documents" && (
       <section className={card}>
         <h2 className="font-semibold mb-1">Property documents</h2>
         <p className="text-xs text-slate-500 mb-4">
@@ -443,7 +477,7 @@ export default function AnalysisDetail({ id }: { id: string }) {
         </form>
         <div className="mt-5 flex items-center gap-3">
           <button
-            onClick={runAnalysis}
+            onClick={() => runAnalysis("documents")}
             disabled={running || !hasRentRoll || !hasT12}
             className="rounded-md bg-blue-700 text-white px-5 py-2 text-sm font-medium hover:bg-blue-800 disabled:opacity-50"
           >
@@ -458,14 +492,15 @@ export default function AnalysisDetail({ id }: { id: string }) {
           )}
         </div>
       </section>
+      )}
 
       {/* Deal calculator (manual mode) */}
+      {tab === "manual" && (
       <section className={card}>
         <h2 className="font-semibold mb-1">Deal calculator</h2>
         <p className="text-xs text-slate-500 mb-4">
-          Get instant underwriting without documents: build the rent from your unit mix and estimate
-          annual operating costs. Once you upload documents and run the AI analysis, the extracted
-          figures take over{ex ? " (currently active)" : ""}.
+          Instant underwriting without documents: build the rent from your unit mix and estimate annual
+          operating costs. Metrics update on save; the AI can then write its analysis from these inputs.
         </p>
         <form onSubmit={saveCalculator}>
           <h3 className="text-sm font-medium text-slate-500 mb-2">Unit mix & rents ($/month)</h3>
@@ -584,15 +619,38 @@ export default function AnalysisDetail({ id }: { id: string }) {
               </div>
             ))}
           </div>
-          <button
-            type="submit"
-            disabled={savingCalc}
-            className="rounded-md bg-slate-800 text-white px-5 py-2 text-sm hover:bg-slate-900 disabled:opacity-50"
-          >
-            {savingCalc ? "Calculating…" : "Save & calculate"}
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              type="submit"
+              disabled={savingCalc}
+              className="rounded-md bg-slate-800 text-white px-5 py-2 text-sm hover:bg-slate-900 disabled:opacity-50"
+            >
+              {savingCalc ? "Calculating…" : "Save & calculate"}
+            </button>
+            <button
+              type="button"
+              onClick={() => runAnalysis("manual")}
+              disabled={running || !data.metricsManual}
+              className="rounded-md bg-blue-700 text-white px-5 py-2 text-sm font-medium hover:bg-blue-800 disabled:opacity-50"
+              title={!data.metricsManual ? "Save calculator inputs first" : undefined}
+            >
+              {running ? "AI analyzing… (a minute or two)" : "Run AI analysis on manual inputs"}
+            </button>
+            {!data.metricsManual && (
+              <span className="text-xs text-slate-500">Save inputs first to enable AI analysis.</span>
+            )}
+          </div>
         </form>
       </section>
+      )}
+
+      {/* Documents tab, nothing analyzed yet */}
+      {tab === "documents" && !m && (
+        <section className={`${card} text-sm text-slate-500`}>
+          No document-based figures yet — upload a Rent Roll and T-12 above and click{" "}
+          <b>Run AI analysis</b>. (The Manual entry tab works without documents.)
+        </section>
+      )}
 
       {/* Acquisition & cash needed */}
       {m && (
@@ -923,7 +981,7 @@ export default function AnalysisDetail({ id }: { id: string }) {
       </section>
 
       {/* Extracted financials */}
-      {ex && (
+      {tab === "documents" && ex && (
         <section className={card}>
           <h2 className="font-semibold mb-1">Extracted financials</h2>
           <p className="text-xs text-slate-500 mb-4">

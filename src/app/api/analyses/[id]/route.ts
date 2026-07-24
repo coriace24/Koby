@@ -22,10 +22,20 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
   if (!analysis) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const extraction = parseExtraction(analysis);
-  const metrics = computeMetrics(analysis, extraction, await metricsOptions(userId));
+  const opts = await metricsOptions(userId);
+  const metrics = computeMetrics(analysis, extraction, opts);
+  const metricsManual = computeMetrics(analysis, extraction, { ...opts, source: "manual" });
+  const metricsDocuments = computeMetrics(analysis, extraction, { ...opts, source: "documents" });
   const aiSummary = analysis.aiSummary ? JSON.parse(analysis.aiSummary) : null;
 
-  return NextResponse.json({ ...analysis, extractionParsed: extraction, metrics, aiSummaryParsed: aiSummary });
+  return NextResponse.json({
+    ...analysis,
+    extractionParsed: extraction,
+    metrics,
+    metricsManual,
+    metricsDocuments,
+    aiSummaryParsed: aiSummary,
+  });
 }
 
 const EDITABLE_NUMERIC = [
@@ -91,9 +101,19 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
   const updated = await prisma.analysis.update({ where: { id }, data, include: { documents: true } });
   const extraction = parseExtraction(updated);
-  const metrics = computeMetrics(updated, extraction, await metricsOptions(userId));
+  const opts = await metricsOptions(userId);
+  const metrics = computeMetrics(updated, extraction, opts);
+  const metricsManual = computeMetrics(updated, extraction, { ...opts, source: "manual" });
+  const metricsDocuments = computeMetrics(updated, extraction, { ...opts, source: "documents" });
   const aiSummary = updated.aiSummary ? JSON.parse(updated.aiSummary) : null;
-  return NextResponse.json({ ...updated, extractionParsed: extraction, metrics, aiSummaryParsed: aiSummary });
+  return NextResponse.json({
+    ...updated,
+    extractionParsed: extraction,
+    metrics,
+    metricsManual,
+    metricsDocuments,
+    aiSummaryParsed: aiSummary,
+  });
 }
 
 export async function DELETE(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {

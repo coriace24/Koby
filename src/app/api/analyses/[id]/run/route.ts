@@ -25,13 +25,19 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     );
   }
 
-  const hasRentRoll = analysis.documents.some((d) => d.docType === "RENT_ROLL");
-  const hasT12 = analysis.documents.some((d) => d.docType === "T12");
-  if (!hasRentRoll || !hasT12) {
-    return NextResponse.json(
-      { error: "A Rent Roll and a T-12 Operating Statement are required before running the analysis." },
-      { status: 400 }
-    );
+  // mode=documents (default): AI reads the uploaded documents, then summarizes.
+  // mode=manual: AI summarizes the user's deal-calculator inputs — no documents needed.
+  const mode = new URL(request.url).searchParams.get("mode") === "manual" ? "manual" : "documents";
+
+  if (mode === "documents") {
+    const hasRentRoll = analysis.documents.some((d) => d.docType === "RENT_ROLL");
+    const hasT12 = analysis.documents.some((d) => d.docType === "T12");
+    if (!hasRentRoll || !hasT12) {
+      return NextResponse.json(
+        { error: "A Rent Roll and a T-12 Operating Statement are required before running the document analysis." },
+        { status: 400 }
+      );
+    }
   }
 
   await prisma.analysis.update({ where: { id }, data: { status: "ANALYZING" } });
@@ -43,12 +49,13 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   };
 
   try {
-    // Step 1: AI extraction from documents (skippable via ?skipExtraction=1 when re-summarizing)
+    // Step 1 (documents mode only): AI extraction from documents
+    // (skippable via ?skipExtraction=1 when re-summarizing)
     const skipExtraction =
       new URL(request.url).searchParams.get("skipExtraction") === "1" && analysis.extraction;
 
-    let extraction = skipExtraction ? parseExtraction(analysis) : null;
-    if (!extraction) {
+    let extraction = mode === "documents" && !skipExtraction ? null : parseExtraction(analysis);
+    if (mode === "documents" && !extraction) {
       extraction = await extractFromDocuments(
         analysis.documents.map((d) => ({
           filename: d.filename,
@@ -66,7 +73,17 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     // Step 2: deterministic underwriting engine
     const fresh = await prisma.analysis.findUniqueOrThrow({ where: { id } });
-    const metrics = computeMetrics(fresh, extraction, metricsOpts);
+    const metrics = computeMetrics(fresh, mode === "manual" ? null : extraction, {
+      ...metricsOpts,
+      source: mode === "manual" ? "manual" : "documents",
+    });
+    if (mode === "manual" && !metrics) {
+      await prisma.analysis.update({ where: { id }, data: { status: analysis.status } });
+      return NextResponse.json(
+        { error: "Enter and save deal-calculator inputs (unit mix and/or operating costs) before running the manual AI analysis." },
+        { status: 400 }
+      );
+    }
 
     // Step 3: AI summary grounded in the computed figures
     const context = JSON.stringify(
@@ -97,7 +114,11 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           exitCapRatePct: fresh.exitCapRate,
           vacancyAssumptionPct: fresh.vacancyAssumption ?? 5,
         },
-        extractedFinancials: extraction,
+        dataSource:
+          mode === "manual"
+            ? "User-entered deal-calculator inputs (no documents analyzed). Note this basis and recommend verifying against actual rent roll and T-12 documents."
+            : "AI-extracted from uploaded property documents.",
+        extractedFinancials: mode === "manual" ? null : extraction,
         computedMetrics: metrics,
       },
       null,
@@ -106,9 +127,11 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     const summary = await generateSummary(context, settings.aiModel);
 
-    const needsReview = extraction.dataFlags.some(
-      (f) => f.severity === "warning" || f.severity === "critical"
-    );
+    const needsReview =
+      mode === "documents" &&
+      (extraction?.dataFlags ?? []).some(
+        (f) => f.severity === "warning" || f.severity === "critical"
+      );
 
     const updated = await prisma.analysis.update({
       where: { id },

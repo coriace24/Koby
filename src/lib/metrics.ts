@@ -25,6 +25,9 @@ import {
 export interface MetricsOptions {
   capRateBands?: number[]; // e.g. [6, 7, 8]
   whatIfRentDelta?: number; // $/month
+  // "auto" (default): documents win when analyzed, else manual.
+  // "manual" / "documents": force that source (null when it has no data).
+  source?: "auto" | "manual" | "documents";
 }
 
 export interface FullMetrics {
@@ -128,9 +131,20 @@ export function computeMetrics(
   extraction: Extraction | null,
   opts: MetricsOptions = {}
 ): FullMetrics | null {
-  // Documents win when analyzed; otherwise fall back to the manual deal calculator.
-  const source = extraction ? "documents" : "manual";
-  const statements = extraction ? fromExtraction(extraction) : fromManual(analysis);
+  const wanted = opts.source ?? "auto";
+  let source: "documents" | "manual";
+  let statements: { income: IncomeStatement; expenses: ExpenseStatement } | null;
+  if (wanted === "documents") {
+    source = "documents";
+    statements = extraction ? fromExtraction(extraction) : null;
+  } else if (wanted === "manual") {
+    source = "manual";
+    statements = fromManual(analysis);
+  } else {
+    // auto: documents win when analyzed; otherwise fall back to the manual deal calculator
+    source = extraction ? "documents" : "manual";
+    statements = extraction ? fromExtraction(extraction) : fromManual(analysis);
+  }
   if (!statements) return null;
 
   const { income, expenses } = statements;

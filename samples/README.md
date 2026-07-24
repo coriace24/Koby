@@ -51,6 +51,9 @@ so figures are slightly more conservative than a down-payment-only calculation.
 
 ### 3. Upload the documents
 
+The analysis page has two tabs: **Manual entry** (deal calculator, no documents needed) and
+**Uploaded documents**. Switch to the **Uploaded documents** tab and upload:
+
 - `sample-rent-roll.xlsx` with document type **Rent Roll (required)**
 - `sample-t12.xlsx` with document type **T-12 Operating Statement (required)**
 
@@ -127,12 +130,16 @@ This reproduces the reference Excel deal calculator exactly. Create a new analys
 | Est. closing costs | 10000 |
 | Vacancy assumption (%) | 5 |
 
-Then in the **Deal calculator** section (no documents needed):
+Then on the **Manual entry** tab, in the **Deal calculator** section (no documents needed):
 
 1. Add a unit-mix row: label `All units`, count `8`, rent `1350`, fee `0`
 2. Enter annual operating costs: property taxes `24000`, insurance `7000`,
    repairs `8000`, landscaping `4800`, misc `1000` (leave the rest 0 — total $44,800)
 3. Click **Save & calculate**
+
+Optionally click **Run AI analysis on manual inputs** — the AI writes its
+overview/opportunities/risks from your calculator inputs alone (uses API credits;
+its summary notes the figures are user-entered and unverified by documents).
 
 Expected results (identical to the Excel template):
 
