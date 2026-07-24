@@ -1,11 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import fs from "fs/promises";
 import path from "path";
-import crypto from "crypto";
 import { prisma } from "@/lib/db";
 import { getSessionUserId } from "@/lib/auth";
+import { saveUpload, deleteUpload } from "@/lib/storage";
 
-const UPLOAD_ROOT = path.join(process.cwd(), "uploads");
 const MAX_FILE_BYTES = 30 * 1024 * 1024;
 
 const ALLOWED_EXTENSIONS = [".pdf", ".xlsx", ".xls", ".csv"];
@@ -39,12 +37,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     return NextResponse.json({ error: "File exceeds the 30 MB limit." }, { status: 400 });
   }
 
-  const safeName = path.basename(file.name).replace(/[^a-zA-Z0-9._-]/g, "_");
-  const dir = path.join(UPLOAD_ROOT, id);
-  await fs.mkdir(dir, { recursive: true });
-  const storedName = `${crypto.randomUUID()}-${safeName}`;
-  const filePath = path.join(dir, storedName);
-  await fs.writeFile(filePath, Buffer.from(await file.arrayBuffer()));
+  const stored = await saveUpload(id, file.name, Buffer.from(await file.arrayBuffer()));
 
   const doc = await prisma.document.create({
     data: {
@@ -53,7 +46,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       mimeType: file.type || "application/octet-stream",
       docType,
       size: file.size,
-      path: filePath,
+      path: stored.storageKey,
     },
   });
 
@@ -78,7 +71,7 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
   const doc = await prisma.document.findFirst({ where: { id: docId, analysisId: id } });
   if (!doc) return NextResponse.json({ error: "Document not found." }, { status: 404 });
 
-  await fs.unlink(doc.path).catch(() => {});
+  await deleteUpload(doc.path);
   await prisma.document.delete({ where: { id: docId } });
   return NextResponse.json({ ok: true });
 }

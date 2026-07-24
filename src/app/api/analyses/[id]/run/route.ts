@@ -4,6 +4,7 @@ import { getSessionUserId } from "@/lib/auth";
 import { aiConfigured, extractFromDocuments, generateSummary } from "@/lib/ai";
 import { computeMetrics, parseExtraction, parseCapRateBands } from "@/lib/metrics";
 import { getOrCreateSettings } from "@/lib/settings";
+import { consumeCreditForRun, recordAiRun } from "@/lib/billing";
 
 export const maxDuration = 300;
 
@@ -40,6 +41,11 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     }
   }
 
+  const creditError = await consumeCreditForRun(userId);
+  if (creditError) {
+    return NextResponse.json({ error: creditError }, { status: 402 });
+  }
+
   await prisma.analysis.update({ where: { id }, data: { status: "ANALYZING" } });
 
   const settings = await getOrCreateSettings(userId);
@@ -56,7 +62,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     let extraction = mode === "documents" && !skipExtraction ? null : parseExtraction(analysis);
     if (mode === "documents" && !extraction) {
-      extraction = await extractFromDocuments(
+      const result = await extractFromDocuments(
         analysis.documents.map((d) => ({
           filename: d.filename,
           mimeType: d.mimeType,
@@ -65,6 +71,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         })),
         settings.aiModel
       );
+      extraction = result.extraction;
+      await recordAiRun({ userId, analysisId: id, mode: "extraction", ...result.usage });
       await prisma.analysis.update({
         where: { id },
         data: { extraction: JSON.stringify(extraction) },
@@ -125,7 +133,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       2
     );
 
-    const summary = await generateSummary(context, settings.aiModel);
+    const { summary, usage: summaryUsage } = await generateSummary(context, settings.aiModel);
+    await recordAiRun({ userId, analysisId: id, mode: "summary", ...summaryUsage });
 
     const needsReview =
       mode === "documents" &&

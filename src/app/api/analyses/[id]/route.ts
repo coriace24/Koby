@@ -45,6 +45,7 @@ const EDITABLE_NUMERIC = [
   "renovationBudget", "targetReturn",
   "marketRentPerUnit", "renoCostPerUnit", "renoUnitCount", "renoRentIncrease",
   "exitCapRate", "vacancyAssumption",
+  "holdYears", "rentGrowthPct", "expenseGrowthPct", "saleCostPct",
 ] as const;
 const EDITABLE_STRING = ["address", "propertyType", "strategy", "notes"] as const;
 
@@ -68,7 +69,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       } else {
         const n = typeof raw === "string" ? parseFloat(raw) : raw;
         if (typeof n === "number" && Number.isFinite(n)) {
-          data[key] = ["units", "yearBuilt", "loanTermYears", "renoUnitCount"].includes(key)
+          data[key] = ["units", "yearBuilt", "loanTermYears", "renoUnitCount", "holdYears"].includes(key)
             ? Math.round(n)
             : n;
         }

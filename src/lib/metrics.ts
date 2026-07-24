@@ -9,6 +9,8 @@ import {
   capRateValuation,
   rentSensitivity,
   unitMixMonthlyRent,
+  holdProjection,
+  type HoldProjectionResult,
   type UnderwritingResult,
   type RentGrowthResult,
   type RenovationResult,
@@ -43,6 +45,7 @@ export interface FullMetrics {
   rentGrowth: RentGrowthResult | null;
   renovation: RenovationResult | null;
   stabilized: StabilizedResult | null;
+  projection: HoldProjectionResult | null;
 }
 
 export function parseExtraction(analysis: Analysis): Extraction | null {
@@ -201,6 +204,22 @@ export function computeMetrics(
       ? stabilized(base, addedIncome, analysis.vacancyAssumption ?? 5, financing, renovationBudget)
       : null;
 
+  const projection =
+    analysis.holdYears && analysis.holdYears > 0 && analysis.exitCapRate && analysis.exitCapRate > 0
+      ? holdProjection(
+          base,
+          financing,
+          {
+            holdYears: analysis.holdYears,
+            rentGrowthPct: analysis.rentGrowthPct ?? 2,
+            expenseGrowthPct: analysis.expenseGrowthPct ?? 2,
+            exitCapRatePct: analysis.exitCapRate,
+            saleCostPct: analysis.saleCostPct ?? 5,
+          },
+          renovationBudget
+        )
+      : null;
+
   return {
     dataSource: source,
     income,
@@ -215,6 +234,7 @@ export function computeMetrics(
     rentGrowth: growth,
     renovation: reno,
     stabilized: stab,
+    projection,
   };
 }
 

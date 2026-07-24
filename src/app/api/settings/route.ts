@@ -3,16 +3,26 @@ import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/db";
 import { getSessionUserId } from "@/lib/auth";
 import { getOrCreateSettings, AI_MODELS } from "@/lib/settings";
+import { usageSummary, creditBalance, billingEnforced } from "@/lib/billing";
 
 export async function GET() {
   const userId = await getSessionUserId();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const [settings, user] = await Promise.all([
+  const [settings, user, usage, credits] = await Promise.all([
     getOrCreateSettings(userId),
     prisma.user.findUnique({ where: { id: userId }, select: { name: true, email: true } }),
+    usageSummary(userId),
+    creditBalance(userId),
   ]);
-  return NextResponse.json({ ...settings, name: user?.name, email: user?.email });
+  return NextResponse.json({
+    ...settings,
+    name: user?.name,
+    email: user?.email,
+    usage,
+    credits,
+    billingEnforced: billingEnforced(),
+  });
 }
 
 function num(v: unknown): number | null {
@@ -45,6 +55,20 @@ export async function PATCH(request: NextRequest) {
     const n = num(b.defaultLoanTermYears);
     if (n !== null && n >= 1 && n <= 40) data.defaultLoanTermYears = Math.round(n);
   }
+  // Report branding
+  if ("companyName" in b && (typeof b.companyName === "string" || b.companyName === null)) {
+    data.companyName = b.companyName?.trim() || null;
+  }
+  if ("companyContact" in b && (typeof b.companyContact === "string" || b.companyContact === null)) {
+    data.companyContact = b.companyContact?.trim() || null;
+  }
+  if ("brandColor" in b) {
+    const c = typeof b.brandColor === "string" ? b.brandColor.trim() : "";
+    if (c === "") data.brandColor = null;
+    else if (/^#[0-9a-fA-F]{6}$/.test(c)) data.brandColor = c;
+    else return NextResponse.json({ error: "Brand color must be a hex value like #1a365d." }, { status: 400 });
+  }
+
   if (typeof b.capRateBands === "string") {
     const bands = b.capRateBands
       .split(",")

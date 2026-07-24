@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
@@ -9,8 +9,20 @@ export default function AuthForm({ mode }: { mode: "login" | "register" }) {
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
+  const [inviteCode, setInviteCode] = useState("");
+  const [inviteRequired, setInviteRequired] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (mode === "register") {
+      fetch("/api/auth/config")
+        .then(async (r) => {
+          if (r.ok) setInviteRequired(Boolean((await r.json()).inviteRequired));
+        })
+        .catch(() => {});
+    }
+  }, [mode]);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -19,7 +31,9 @@ export default function AuthForm({ mode }: { mode: "login" | "register" }) {
     const res = await fetch(`/api/auth/${mode}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(mode === "register" ? { email, name, password } : { email, password }),
+      body: JSON.stringify(
+        mode === "register" ? { email, name, password, inviteCode } : { email, password }
+      ),
     });
     if (res.ok) {
       router.push("/");
@@ -69,6 +83,17 @@ export default function AuthForm({ mode }: { mode: "login" | "register" }) {
               <p className="text-xs text-slate-400 mt-1">At least 8 characters.</p>
             )}
           </div>
+          {mode === "register" && inviteRequired && (
+            <div>
+              <label className="block text-sm font-medium mb-1">Invite code</label>
+              <input
+                className={input}
+                value={inviteCode}
+                onChange={(e) => setInviteCode(e.target.value)}
+                required
+              />
+            </div>
+          )}
           {error && <p className="text-sm text-red-600">{error}</p>}
           <button
             type="submit"

@@ -79,6 +79,26 @@ interface Metrics {
     stabilizedCashFlow: number;
     stabilizedCashOnCash: number | null;
   } | null;
+  projection: {
+    years: {
+      year: number;
+      effectiveGrossIncome: number;
+      operatingExpenses: number;
+      noi: number;
+      debtService: number;
+      cashFlow: number;
+    }[];
+    salePrice: number;
+    saleCosts: number;
+    loanBalanceAtExit: number;
+    netSaleProceeds: number;
+    totalCashInvested: number;
+    totalCashFlow: number;
+    totalProfit: number;
+    equityMultiple: number | null;
+    irrPct: number | null;
+    averageAnnualReturnPct: number | null;
+  } | null;
 }
 interface AiSummary {
   overview: string;
@@ -92,6 +112,10 @@ interface Doc {
   filename: string;
   docType: string;
   size: number;
+}
+interface ShareLinkInfo {
+  id: string;
+  createdAt: string;
 }
 interface AnalysisData {
   id: string;
@@ -121,6 +145,10 @@ interface AnalysisData {
   renoRentIncrease: number | null;
   exitCapRate: number | null;
   vacancyAssumption: number | null;
+  holdYears: number | null;
+  rentGrowthPct: number | null;
+  expenseGrowthPct: number | null;
+  saleCostPct: number | null;
   status: string;
   documents: Doc[];
   extractionParsed: Extraction | null;
@@ -204,6 +232,9 @@ export default function AnalysisDetail({ id }: { id: string }) {
   const [mixRows, setMixRows] = useState<UnitMixRow[]>([]);
   const [savingCalc, setSavingCalc] = useState(false);
   const [tab, setTab] = useState<"manual" | "documents">("manual");
+  const [shareLinks, setShareLinks] = useState<ShareLinkInfo[]>([]);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [copiedLinkId, setCopiedLinkId] = useState<string | null>(null);
   const tabInitialized = useRef(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const docTypeRef = useRef<HTMLSelectElement>(null);
@@ -229,9 +260,42 @@ export default function AnalysisDetail({ id }: { id: string }) {
     }
   }, [id]);
 
+  const loadShareLinks = useCallback(async () => {
+    const res = await fetch(`/api/analyses/${id}/share`);
+    if (res.ok) setShareLinks(await res.json());
+  }, [id]);
+
   useEffect(() => {
     load();
-  }, [load]);
+    loadShareLinks();
+  }, [load, loadShareLinks]);
+
+  async function createShareLink() {
+    const res = await fetch(`/api/analyses/${id}/share`, { method: "POST" });
+    if (res.ok) {
+      await loadShareLinks();
+      setShareOpen(true);
+    } else {
+      const d = await res.json().catch(() => ({}));
+      setError(d.error ?? "Failed to create share link.");
+    }
+  }
+
+  async function revokeShareLink(linkId: string) {
+    await fetch(`/api/analyses/${id}/share?linkId=${linkId}`, { method: "DELETE" });
+    await loadShareLinks();
+  }
+
+  async function copyShareLink(linkId: string) {
+    const url = `${window.location.origin}/share/${linkId}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopiedLinkId(linkId);
+      setTimeout(() => setCopiedLinkId(null), 2000);
+    } catch {
+      window.prompt("Copy this link:", url);
+    }
+  }
 
   async function saveCalculator(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -400,12 +464,62 @@ export default function AnalysisDetail({ id }: { id: string }) {
             >
               Export PDF report
             </a>
+            <button
+              onClick={() => setShareOpen(!shareOpen)}
+              className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
+            >
+              Share{shareLinks.length > 0 && ` (${shareLinks.length})`}
+            </button>
             <button onClick={deleteAnalysis} className="text-sm text-red-600 hover:underline">
               Delete
             </button>
           </div>
         </div>
       </div>
+
+      {/* Share links */}
+      {shareOpen && (
+        <section className={card}>
+          <h2 className="font-semibold mb-1">Share with investors</h2>
+          <p className="text-xs text-slate-500 mb-4">
+            A share link opens a read-only branded summary (with PDF download) — no login needed. Anyone
+            with the link can view it, so revoke links you no longer want out there.
+          </p>
+          {shareLinks.length > 0 && (
+            <ul className="divide-y divide-slate-100 mb-4">
+              {shareLinks.map((l) => (
+                <li key={l.id} className="py-2 flex flex-wrap items-center justify-between gap-2 text-sm">
+                  <a
+                    href={`/share/${l.id}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-blue-700 hover:underline truncate max-w-full"
+                  >
+                    {typeof window !== "undefined" ? window.location.origin : ""}/share/{l.id}
+                  </a>
+                  <span className="flex items-center gap-3 shrink-0">
+                    <span className="text-xs text-slate-400">
+                      created {new Date(l.createdAt).toLocaleDateString()}
+                    </span>
+                    <button onClick={() => copyShareLink(l.id)} className="text-xs text-blue-700 hover:underline">
+                      {copiedLinkId === l.id ? "Copied!" : "Copy link"}
+                    </button>
+                    <button onClick={() => revokeShareLink(l.id)} className="text-xs text-red-600 hover:underline">
+                      Revoke
+                    </button>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <button
+            onClick={createShareLink}
+            className="rounded-md bg-blue-700 text-white px-4 py-2 text-sm font-medium hover:bg-blue-800"
+          >
+            Create share link
+          </button>
+        </section>
+      )}
 
       {error && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md p-3">{error}</p>}
 
@@ -847,6 +961,68 @@ export default function AnalysisDetail({ id }: { id: string }) {
         </section>
       )}
 
+      {/* Hold-period returns */}
+      {m && (
+        <section className={card}>
+          <h2 className="font-semibold mb-1">Hold-period returns (IRR)</h2>
+          {m.projection ? (
+            <>
+              <p className="text-xs text-slate-500 mb-4">
+                Projected sale after {data.holdYears} year{(data.holdYears ?? 0) === 1 ? "" : "s"} at a{" "}
+                {pct(data.exitCapRate, 1)} exit cap, with {pct(data.rentGrowthPct ?? 2, 1)} annual income
+                growth and {pct(data.expenseGrowthPct ?? 2, 1)} expense growth. Edit these in Assumptions
+                below.
+              </p>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+                <Stat label="IRR" value={pct(m.projection.irrPct)} accent />
+                <Stat
+                  label="Equity multiple"
+                  value={m.projection.equityMultiple !== null ? `${m.projection.equityMultiple.toFixed(2)}x` : "—"}
+                  accent
+                />
+                <Stat label="Total profit" value={money(m.projection.totalProfit)} accent />
+                <Stat label="Avg annual return" value={pct(m.projection.averageAnnualReturnPct)} />
+                <Stat label="Projected sale price" value={money(m.projection.salePrice)} />
+                <Stat label="Loan balance at exit" value={money(m.projection.loanBalanceAtExit)} />
+                <Stat label="Net sale proceeds" value={money(m.projection.netSaleProceeds)} />
+                <Stat label="Total cash invested" value={money(m.projection.totalCashInvested)} />
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-xs text-slate-400">
+                      <th className="pb-1">Year</th>
+                      <th className="pb-1 text-right">Effective income</th>
+                      <th className="pb-1 text-right">Op. expenses</th>
+                      <th className="pb-1 text-right">NOI</th>
+                      <th className="pb-1 text-right">Debt service</th>
+                      <th className="pb-1 text-right">Cash flow</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {m.projection.years.map((y) => (
+                      <tr key={y.year} className="border-t border-slate-100">
+                        <td className="py-1.5">{y.year}</td>
+                        <td className="py-1.5 text-right">{money(y.effectiveGrossIncome)}</td>
+                        <td className="py-1.5 text-right">{money(y.operatingExpenses)}</td>
+                        <td className="py-1.5 text-right font-medium">{money(y.noi)}</td>
+                        <td className="py-1.5 text-right">{money(y.debtService)}</td>
+                        <td className="py-1.5 text-right">{money(y.cashFlow)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          ) : (
+            <p className="text-sm text-slate-500">
+              Set a <b>hold period</b> and an <b>exit cap rate</b> in the Assumptions section below to
+              project year-by-year cash flows, sale proceeds, IRR, and equity multiple.
+            </p>
+          )}
+        </section>
+      )}
+
       {/* Assumptions */}
       <section className={card}>
         <h2 className="font-semibold mb-1">Assumptions</h2>
@@ -965,6 +1141,51 @@ export default function AnalysisDetail({ id }: { id: string }) {
               type="number"
               step="any"
               defaultValue={data.targetReturn ?? ""}
+              className={inputCls}
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium mb-1">Hold period (years)</label>
+            <input
+              name="holdYears"
+              type="number"
+              step="1"
+              min="0"
+              defaultValue={data.holdYears ?? ""}
+              placeholder="e.g. 5 — enables IRR"
+              className={inputCls}
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium mb-1">Income growth (%/yr)</label>
+            <input
+              name="rentGrowthPct"
+              type="number"
+              step="any"
+              defaultValue={data.rentGrowthPct ?? ""}
+              placeholder="2"
+              className={inputCls}
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium mb-1">Expense growth (%/yr)</label>
+            <input
+              name="expenseGrowthPct"
+              type="number"
+              step="any"
+              defaultValue={data.expenseGrowthPct ?? ""}
+              placeholder="2"
+              className={inputCls}
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium mb-1">Sale costs (% of sale price)</label>
+            <input
+              name="saleCostPct"
+              type="number"
+              step="any"
+              defaultValue={data.saleCostPct ?? ""}
+              placeholder="5"
               className={inputCls}
             />
           </div>

@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
-import fs from "fs";
 import * as XLSX from "xlsx";
+import { readUpload } from "./storage";
 
 const DEFAULT_MODEL = process.env.ANTHROPIC_MODEL || "claude-opus-4-8";
 
@@ -73,8 +73,8 @@ interface DocInput {
 
 const MAX_SHEET_CHARS = 60_000;
 
-function spreadsheetToText(filePath: string): string {
-  const wb = XLSX.readFile(filePath);
+function spreadsheetToText(data: Buffer): string {
+  const wb = XLSX.read(data, { type: "buffer" });
   const parts: string[] = [];
   for (const name of wb.SheetNames) {
     const csv = XLSX.utils.sheet_to_csv(wb.Sheets[name]);
@@ -87,23 +87,23 @@ function spreadsheetToText(filePath: string): string {
   return text;
 }
 
-function docContentBlocks(doc: DocInput): Anthropic.ContentBlockParam[] {
+async function docContentBlocks(doc: DocInput): Promise<Anthropic.ContentBlockParam[]> {
   const header: Anthropic.ContentBlockParam = {
     type: "text",
     text: `Document: "${doc.filename}" (declared type: ${doc.docType})`,
   };
+  const data = await readUpload(doc.path);
   if (doc.mimeType === "application/pdf" || doc.filename.toLowerCase().endsWith(".pdf")) {
-    const data = fs.readFileSync(doc.path).toString("base64");
     return [
       header,
       {
         type: "document",
-        source: { type: "base64", media_type: "application/pdf", data },
+        source: { type: "base64", media_type: "application/pdf", data: data.toString("base64") },
       },
     ];
   }
   // Excel / CSV — convert to CSV text
-  return [header, { type: "text", text: spreadsheetToText(doc.path) }];
+  return [header, { type: "text", text: spreadsheetToText(data) }];
 }
 
 // ---------- Extraction ----------
@@ -194,11 +194,20 @@ Rules:
 - rentRoll.averageRentPerUnit is the average in-place monthly rent per occupied unit from the rent roll.
 - Do not invent numbers. Prefer the most recent trailing-12 data when multiple periods exist.`;
 
-export async function extractFromDocuments(docs: DocInput[], model?: string | null): Promise<Extraction> {
+export interface AiUsage {
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+export async function extractFromDocuments(
+  docs: DocInput[],
+  model?: string | null
+): Promise<{ extraction: Extraction; usage: AiUsage }> {
   const client = getClient();
 
   const content: Anthropic.ContentBlockParam[] = [];
-  for (const doc of docs) content.push(...docContentBlocks(doc));
+  for (const doc of docs) content.push(...(await docContentBlocks(doc)));
   content.push({
     type: "text",
     text: "Extract the income, expense, and rent roll data from the documents above into the required JSON structure. Remember: annual amounts, sources for every number, and data quality flags.",
@@ -222,7 +231,14 @@ export async function extractFromDocuments(docs: DocInput[], model?: string | nu
 
   const text = response.content.find((b) => b.type === "text")?.text;
   if (!text) throw new Error("AI extraction returned no output.");
-  return JSON.parse(text) as Extraction;
+  return {
+    extraction: JSON.parse(text) as Extraction,
+    usage: {
+      model: response.model,
+      inputTokens: response.usage.input_tokens,
+      outputTokens: response.usage.output_tokens,
+    },
+  };
 }
 
 // ---------- Analysis summary ----------
@@ -251,7 +267,10 @@ Strict rules:
 - assumptionNotes: list the key assumptions that drive the results and what happens if they change.
 - summary: a short closing paragraph that reminds the user to verify AI-generated information before using it for investment decisions.`;
 
-export async function generateSummary(context: string, model?: string | null): Promise<AiSummary> {
+export async function generateSummary(
+  context: string,
+  model?: string | null
+): Promise<{ summary: AiSummary; usage: AiUsage }> {
   const client = getClient();
 
   const response = await client.messages.create({
@@ -274,5 +293,12 @@ export async function generateSummary(context: string, model?: string | null): P
 
   const text = response.content.find((b) => b.type === "text")?.text;
   if (!text) throw new Error("AI summary returned no output.");
-  return JSON.parse(text) as AiSummary;
+  return {
+    summary: JSON.parse(text) as AiSummary,
+    usage: {
+      model: response.model,
+      inputTokens: response.usage.input_tokens,
+      outputTokens: response.usage.output_tokens,
+    },
+  };
 }

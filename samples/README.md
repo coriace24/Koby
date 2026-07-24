@@ -107,8 +107,17 @@ On the same page:
 ### 8. Export the report
 
 Click **Export PDF report** (top right) — a professional investment summary including
-cash needed, the metrics, valuation matrix, rent sensitivity, value-add analysis, AI
-narrative, data flags, and the verification disclaimer.
+cash needed, the metrics, valuation matrix, rent sensitivity, value-add analysis,
+hold-period returns (if set), AI narrative, data flags, and the verification disclaimer.
+If you filled in **Settings → Report branding**, your company name, contact line, and
+accent color appear on the report.
+
+### 9. Share it with an "investor"
+
+Click **Share** (top right, next to Export) → **Create share link** → **Copy link**.
+Open the copied link in a private/incognito window: you get a read-only branded summary
+page with a PDF download — no login required. Back in the app, click **Revoke** and
+reload the incognito tab: it now says the link is not available.
 
 ## Test B — deal calculator (no documents, no AI, instant)
 
@@ -157,16 +166,52 @@ Expected results (identical to the Excel template):
 The valuation table shows the property is only worth its $1.3M asking at a 6% cap —
 at 8% it's worth ~$979K, which is why the calculator's example offer was $1M.
 
+### Test B extension — hold-period returns (IRR)
+
+Still on the same analysis, scroll to **Assumptions**, enter and save:
+
+| Field | Value |
+| --- | --- |
+| Hold period (years) | 5 |
+| Exit cap rate (%) | 7 |
+| Income growth (%/yr) | 2 |
+| Expense growth (%/yr) | 2 |
+| Sale costs (% of sale price) | 5 |
+
+The **Hold-period returns (IRR)** section appears instantly with a year-by-year table
+and these exact figures:
+
+| Metric | Value |
+| --- | --- |
+| Year 1 cash flow | $13,500 |
+| Projected sale price (year-6 NOI ÷ 7%) | $1,235,309 |
+| Loan balance at exit | $724,497 |
+| Net sale proceeds | $449,046 |
+| Total profit | $322,527 |
+| Equity multiple | 2.54x |
+| IRR | 22.3% |
+
+(Leave the growth/sale-cost fields blank and the engine uses 2% / 2% / 5% defaults —
+same result.)
+
 ## Settings to try
 
 Open **Settings** in the top navigation:
 
 - **Claude model** — switch between Opus (most capable), Sonnet (cheaper), Haiku (cheapest)
+- **AI usage** — after a few AI runs, see the run count, tokens, and estimated API cost
+  (this ledger is what pay-per-use billing will draw on at hosting time)
+- **Report branding** — set a company name, contact line, and accent color, then re-export
+  a PDF or open a share link: your branding is on both
 - **Underwriting defaults** — vacancy %, closing-cost %, interest rate, loan term
   (pre-fill new analyses)
 - **Cap-rate bands** — e.g. `5.5,6.5,7.5` changes the valuation table everywhere
 - **What-if rent step** — e.g. `250` tightens the sensitivity scenarios
 - **Profile** — change your name or password
+
+**Optional — invite-only signup:** add `INVITE_CODE="something"` to `.env` and restart.
+The register page now demands the code; wrong or missing code → registration refused.
+Remove the line (or leave it empty) to reopen signup.
 
 ## Troubleshooting
 

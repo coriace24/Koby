@@ -30,6 +30,46 @@ model UserSettings {
   defaultDownPaymentPct Float   @default(25)
   capRateBands          String  @default("6,7,8") // comma-separated percents for the valuation matrix
   whatIfRentDelta       Float   @default(500) // $/month step for rent sensitivity
+
+  // Report branding
+  companyName    String?
+  companyContact String? // phone / email / license line shown on reports
+  brandColor     String? // hex accent color for reports, e.g. #1a365d
+}
+
+// One row per AI invocation — the usage & cost record billing is built on.
+model AiRun {
+  id           String   @id @default(cuid())
+  userId       String
+  analysisId   String?
+  mode         String // "extraction" | "summary"
+  model        String
+  inputTokens  Int
+  outputTokens Int
+  costUsd      Float // estimated from the model's price card
+  createdAt    DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
+
+// Credit movements; balance = sum(delta). Enforcement is off until billing is enabled.
+model CreditLedger {
+  id        String   @id @default(cuid())
+  userId    String
+  delta     Float // + purchase/grant, - consumption
+  reason    String // "grant" | "ai_run" | "purchase" | "adjustment"
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+// Public, revocable read-only links to an analysis report.
+model ShareLink {
+  id         String    @id @default(cuid()) // the token in the URL
+  analysisId String
+  analysis   Analysis  @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+  createdAt  DateTime  @default(now())
+  revokedAt  DateTime?
 }
 
 model Analysis {
@@ -67,8 +107,14 @@ model Analysis {
   renoCostPerUnit      Float?
   renoUnitCount        Int?
   renoRentIncrease     Float? // expected $/unit/month increase after renovation
-  exitCapRate          Float? // percent, for value impact estimates
+  exitCapRate          Float? // percent, for value impact + sale price at exit
   vacancyAssumption    Float? // percent override used in stabilized projections
+
+  // Hold-period projection assumptions
+  holdYears        Int? // investment horizon; projection computed when set with exitCapRate
+  rentGrowthPct    Float? // annual income growth, percent
+  expenseGrowthPct Float? // annual expense growth, percent
+  saleCostPct      Float? // selling costs as percent of sale price
 
   // Manual deal-calculator inputs (JSON strings) — used when no documents are analyzed yet
   unitMix            String? // [{label, count, rent, fee}] — per-unit-type monthly rents
@@ -83,7 +129,8 @@ model Analysis {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  documents Document[]
+  documents  Document[]
+  shareLinks ShareLink[]
 }
 
 model Document {

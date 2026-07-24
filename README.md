@@ -21,7 +21,7 @@ decisions.
   documents are analyzed.
 - **Settings** — choose the Claude model (Opus/Sonnet/Haiku), set underwriting defaults
   (vacancy, closing-cost %, interest rate, loan term), configure cap-rate bands and the
-  what-if step, change your name/password.
+  what-if step, set report branding, review AI usage, change your name/password.
 - **Create property analysis** — address, purchase price, units, property type, year built,
   occupancy, and financing assumptions; optional renovation budget, target return, strategy,
   and free-form notes.
@@ -39,7 +39,17 @@ decisions.
 - **Editable assumptions & overrides** — change any assumption or extracted figure; the
   engine recalculates immediately. The AI never makes definitive investment
   recommendations — it presents figures, assumptions, opportunities, and risks.
-- **PDF reports** — export a professional investment summary to share with investors.
+- **Hold-period returns (IRR)** — set a hold period, exit cap rate, income/expense growth,
+  and sale costs; get a year-by-year cash-flow projection, projected sale price, net
+  proceeds after loan payoff, total profit, equity multiple, and IRR.
+- **Branded PDF reports** — export a professional investment summary carrying your company
+  name, contact line, and accent color (set once in Settings).
+- **Share links** — generate a read-only public link per analysis (branded summary page +
+  PDF download, no login needed); revoke any link at any time.
+- **AI usage metering** — every AI run is recorded (model, tokens, estimated API cost) and
+  shown in Settings; a credit ledger and the `BILLING_ENFORCED` switch are the scaffold for
+  pay-per-use billing at hosting time.
+- **Invite-only registration (optional)** — set `INVITE_CODE` to gate signups.
 
 ## Stack
 
@@ -51,7 +61,7 @@ Anthropic Claude API (`@anthropic-ai/sdk`) · PDFKit · SheetJS
 ```bash
 npm install
 cp .env.example .env   # then edit .env
-npx prisma db push     # creates prisma/dev.db
+npx prisma@6.19.3 db push   # creates prisma/dev.db (always pin @6.19.3 — Prisma 7 breaks this schema)
 npm run dev
 ```
 
@@ -65,6 +75,8 @@ Open http://localhost:3000, register an account, and create your first analysis.
 | `SESSION_SECRET` | Secret used to sign session cookies — change it in production |
 | `ANTHROPIC_API_KEY` | Anthropic API key. Without it, uploads and the underwriting math still work, but AI extraction/summaries return a configuration error |
 | `ANTHROPIC_MODEL` | Optional model override (default `claude-opus-4-8`) |
+| `BILLING_ENFORCED` | `"true"` makes each AI run consume 1 credit and blocks runs at 0 credits (default off — unlimited local use). Usage is metered either way |
+| `INVITE_CODE` | If set, new registrations must supply this code; leave empty for open signup |
 
 ## Try it with sample data
 
@@ -83,7 +95,8 @@ inputs to enter and the results to expect. Start there.
 4. **Review & adjust** — edit assumptions (market rent, renovation plan, vacancy, financing)
    or override extracted figures; metrics recalculate instantly. Re-run the AI analysis to
    refresh the written summary.
-5. **Export** the PDF investment summary.
+5. **Export** the branded PDF investment summary, or create a **share link** so investors
+   can view a read-only summary page without an account.
 
 Analyses with data-quality warnings are marked **"User verification required"**; clean runs
 are marked **"Analysis completed"**.

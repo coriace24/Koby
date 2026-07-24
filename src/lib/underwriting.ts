@@ -198,6 +198,132 @@ export function rentSensitivity(
   });
 }
 
+// ---------- Hold-period projection & investor returns ----------
+
+export function loanBalanceAfter(
+  principal: number,
+  annualRatePct: number,
+  termYears: number,
+  monthsElapsed: number
+): number {
+  if (principal <= 0) return 0;
+  const n = termYears * 12;
+  const k = Math.min(Math.max(monthsElapsed, 0), n);
+  const r = annualRatePct / 100 / 12;
+  if (r === 0) return principal * (1 - k / n);
+  const pmt = monthlyPayment(principal, annualRatePct, termYears);
+  return principal * Math.pow(1 + r, k) - (pmt * (Math.pow(1 + r, k) - 1)) / r;
+}
+
+// IRR via bisection on annual cash flows (cashflows[0] is the negative initial investment).
+export function irr(cashflows: number[]): number | null {
+  if (cashflows.length < 2 || cashflows[0] >= 0) return null;
+  const npv = (rate: number) =>
+    cashflows.reduce((sum, cf, t) => sum + cf / Math.pow(1 + rate, t), 0);
+  let lo = -0.99;
+  let hi = 10;
+  if (npv(lo) * npv(hi) > 0) return null; // no sign change in a sane range
+  for (let i = 0; i < 200; i++) {
+    const mid = (lo + hi) / 2;
+    if (npv(lo) * npv(mid) <= 0) hi = mid;
+    else lo = mid;
+  }
+  return ((lo + hi) / 2) * 100; // percent
+}
+
+export interface ProjectionYear {
+  year: number;
+  effectiveGrossIncome: number;
+  operatingExpenses: number;
+  noi: number;
+  debtService: number;
+  cashFlow: number;
+}
+
+export interface HoldProjectionInputs {
+  holdYears: number;
+  rentGrowthPct: number; // annual
+  expenseGrowthPct: number; // annual
+  exitCapRatePct: number;
+  saleCostPct: number; // percent of sale price
+}
+
+export interface HoldProjectionResult {
+  years: ProjectionYear[];
+  salePrice: number; // forward (year hold+1) NOI / exit cap
+  saleCosts: number;
+  loanBalanceAtExit: number;
+  netSaleProceeds: number;
+  totalCashInvested: number;
+  totalCashFlow: number; // operating cash flow over the hold
+  totalProfit: number; // cash flow + net proceeds - invested
+  equityMultiple: number | null;
+  irrPct: number | null;
+  averageAnnualReturnPct: number | null;
+}
+
+export function holdProjection(
+  base: UnderwritingResult,
+  financing: FinancingInputs,
+  inputs: HoldProjectionInputs,
+  renovationBudget = 0
+): HoldProjectionResult {
+  const invested = cashNeeded(financing, renovationBudget).total;
+  const years: ProjectionYear[] = [];
+  for (let t = 1; t <= inputs.holdYears; t++) {
+    const egi = base.effectiveGrossIncome * Math.pow(1 + inputs.rentGrowthPct / 100, t - 1);
+    const opex = base.totalOperatingExpenses * Math.pow(1 + inputs.expenseGrowthPct / 100, t - 1);
+    const noi = egi - opex;
+    years.push({
+      year: t,
+      effectiveGrossIncome: egi,
+      operatingExpenses: opex,
+      noi,
+      debtService: base.annualDebtService,
+      cashFlow: noi - base.annualDebtService,
+    });
+  }
+
+  // Sale priced on forward (year hold+1) NOI, the standard convention.
+  const forwardNoi =
+    (base.effectiveGrossIncome * Math.pow(1 + inputs.rentGrowthPct / 100, inputs.holdYears) -
+      base.totalOperatingExpenses * Math.pow(1 + inputs.expenseGrowthPct / 100, inputs.holdYears));
+  const salePrice = inputs.exitCapRatePct > 0 ? forwardNoi / (inputs.exitCapRatePct / 100) : 0;
+  const saleCosts = salePrice * (inputs.saleCostPct / 100);
+  const loanBalanceAtExit = loanBalanceAfter(
+    financing.loanAmount,
+    financing.interestRate,
+    financing.loanTermYears,
+    inputs.holdYears * 12
+  );
+  const netSaleProceeds = salePrice - saleCosts - loanBalanceAtExit;
+
+  const totalCashFlow = years.reduce((s, y) => s + y.cashFlow, 0);
+  const totalProfit = totalCashFlow + netSaleProceeds - invested;
+
+  const flows = [-invested];
+  for (let t = 0; t < years.length; t++) {
+    flows.push(years[t].cashFlow + (t === years.length - 1 ? netSaleProceeds : 0));
+  }
+
+  return {
+    years,
+    salePrice,
+    saleCosts,
+    loanBalanceAtExit,
+    netSaleProceeds,
+    totalCashInvested: invested,
+    totalCashFlow,
+    totalProfit,
+    equityMultiple: invested > 0 ? (totalCashFlow + netSaleProceeds) / invested : null,
+    irrPct: irr(flows),
+    averageAnnualReturnPct:
+      invested > 0 && inputs.holdYears > 0
+        ? (totalProfit / invested / inputs.holdYears) * 100
+        : null,
+  };
+}
+
 // ---------- Value-add analysis ----------
 
 export interface RentGrowthResult {

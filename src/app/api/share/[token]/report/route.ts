@@ -1,20 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { getSessionUserId } from "@/lib/auth";
 import { computeMetrics, parseExtraction, parseCapRateBands } from "@/lib/metrics";
 import { getOrCreateSettings } from "@/lib/settings";
 import { buildReportPdf } from "@/lib/report";
 import type { AiSummary } from "@/lib/ai";
 
-export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const userId = await getSessionUserId();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+// Public: PDF report behind an unguessable share token.
+export async function GET(_request: NextRequest, { params }: { params: Promise<{ token: string }> }) {
+  const { token } = await params;
+  const link = await prisma.shareLink.findUnique({
+    where: { id: token },
+    include: { analysis: true },
+  });
+  if (!link || link.revokedAt) {
+    return NextResponse.json({ error: "This share link does not exist or was revoked." }, { status: 404 });
+  }
 
-  const { id } = await params;
-  const analysis = await prisma.analysis.findFirst({ where: { id, userId } });
-  if (!analysis) return NextResponse.json({ error: "Not found" }, { status: 404 });
-
-  const settings = await getOrCreateSettings(userId);
+  const analysis = link.analysis;
+  const settings = await getOrCreateSettings(analysis.userId);
   const extraction = parseExtraction(analysis);
   const metrics = computeMetrics(analysis, extraction, {
     capRateBands: parseCapRateBands(settings.capRateBands),
@@ -27,7 +30,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
   return new NextResponse(new Uint8Array(pdf), {
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": `attachment; filename="analysis-${analysis.id}.pdf"`,
+      "Content-Disposition": `inline; filename="investment-summary.pdf"`,
     },
   });
 }

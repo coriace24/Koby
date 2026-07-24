@@ -26,6 +26,12 @@ interface Settings {
   defaultDownPaymentPct: number;
   capRateBands: string;
   whatIfRentDelta: number;
+  companyName: string | null;
+  companyContact: string | null;
+  brandColor: string | null;
+  usage: { runs: number; inputTokens: number; outputTokens: number; costUsd: number };
+  credits: number;
+  billingEnforced: boolean;
 }
 
 export default function SettingsPage() {
@@ -97,6 +103,64 @@ export default function SettingsPage() {
             ))}
           </select>
         </div>
+      </section>
+
+      {/* AI usage */}
+      <section className={card}>
+        <h2 className="font-semibold mb-1">AI usage</h2>
+        <p className="text-xs text-slate-500 mb-4">
+          Every AI run is metered — this is the record a pay-per-use plan will bill from.
+          {s.billingEnforced
+            ? ` Billing is enforced: ${s.credits} credit${s.credits === 1 ? "" : "s"} remaining.`
+            : " Billing is not enforced yet (unlimited runs)."}
+        </p>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+          {[
+            ["AI runs", String(s.usage.runs)],
+            ["Input tokens", s.usage.inputTokens.toLocaleString()],
+            ["Output tokens", s.usage.outputTokens.toLocaleString()],
+            ["Est. API cost", `$${s.usage.costUsd.toFixed(2)}`],
+          ].map(([label, value]) => (
+            <div key={label} className="rounded-lg bg-slate-50 border border-slate-100 p-3">
+              <div className="text-xs text-slate-500">{label}</div>
+              <div className="text-lg font-semibold">{value}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Report branding */}
+      <section className={card}>
+        <h2 className="font-semibold mb-1">Report branding</h2>
+        <p className="text-xs text-slate-500 mb-4">
+          Shown on PDF reports and shared report pages — your name in front of investors, not ours.
+        </p>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            const fd = new FormData(e.currentTarget);
+            save(Object.fromEntries(fd.entries()), "Branding saved.");
+          }}
+          className="grid sm:grid-cols-3 gap-4"
+        >
+          <div>
+            <label className={label}>Company / your name</label>
+            <input name="companyName" defaultValue={s.companyName ?? ""} className={input} placeholder="Acme Realty Group" />
+          </div>
+          <div>
+            <label className={label}>Contact line</label>
+            <input name="companyContact" defaultValue={s.companyContact ?? ""} className={input} placeholder="jane@acme.com · (555) 010-2233" />
+          </div>
+          <div>
+            <label className={label}>Accent color (hex)</label>
+            <input name="brandColor" defaultValue={s.brandColor ?? ""} className={input} placeholder="#1a365d" />
+          </div>
+          <div className="sm:col-span-3">
+            <button type="submit" disabled={busy} className="rounded-md bg-blue-700 text-white px-5 py-2 text-sm font-medium hover:bg-blue-800 disabled:opacity-50">
+              Save branding
+            </button>
+          </div>
+        </form>
       </section>
 
       {/* Underwriting defaults */}

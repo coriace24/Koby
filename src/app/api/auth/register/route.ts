@@ -16,6 +16,14 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // Optional registration gate: set INVITE_CODE in the environment to require it.
+  if (process.env.INVITE_CODE) {
+    const invite = typeof body?.inviteCode === "string" ? body.inviteCode.trim() : "";
+    if (invite !== process.env.INVITE_CODE) {
+      return NextResponse.json({ error: "Invalid invite code." }, { status: 403 });
+    }
+  }
+
   const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) {
     return NextResponse.json({ error: "An account with this email already exists." }, { status: 409 });
