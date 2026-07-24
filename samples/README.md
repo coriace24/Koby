@@ -12,8 +12,10 @@ plus a documents-free test of the built-in **deal calculator** (Test B below).
 
 ## Prerequisites
 
-- The app is running (see the main [README](../README.md) for setup), locally or in a
-  GitHub Codespace.
+- The app is running (see the main [README](../README.md) for setup), locally, in a
+  GitHub Codespace, **or via the Windows desktop package** (`Koby.exe` from the
+  companion *Application* repo — it installs into `Documents\Koby` and opens the
+  browser for you; all tests below work identically there).
 - `ANTHROPIC_API_KEY` is set in `.env` **and the Anthropic account has API credits**
   (console.anthropic.com → Plans & Billing). Without credits the AI step fails with a
   "credit balance is too low" error.

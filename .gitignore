@@ -47,3 +47,7 @@ prisma/*.db-journal
 
 # keep the example env
 !.env.example
+
+# desktop package build output
+/dist
+desktop/node_modules

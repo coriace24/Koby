@@ -5,7 +5,9 @@ import fs from "fs/promises";
 import path from "path";
 import crypto from "crypto";
 
-const UPLOAD_ROOT = path.join(process.cwd(), "uploads");
+// KOBY_DATA_DIR (set by the desktop launcher) keeps user data outside the app
+// folder so updates never delete uploads. Defaults to the project dir for dev.
+const UPLOAD_ROOT = path.join(process.env.KOBY_DATA_DIR || process.cwd(), "uploads");
 
 export interface StoredFile {
   storageKey: string; // opaque key persisted in the Document.path column

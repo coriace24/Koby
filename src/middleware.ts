@@ -9,6 +9,8 @@ const PUBLIC_PATHS = [
   "/api/auth/config",
   "/share", // public read-only report links
   "/api/share",
+  "/setup", // desktop first-launch API-key setup
+  "/api/desktop",
 ];
 
 export async function middleware(request: NextRequest) {

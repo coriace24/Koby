@@ -1,5 +1,7 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  // "windows" ships the query engine the desktop (.exe) package needs
+  binaryTargets = ["native", "windows"]
 }
 
 datasource db {

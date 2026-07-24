@@ -1,0 +1,20 @@
+{
+  "name": "koby-desktop-launcher",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Windows launcher for the Koby desktop package (compiled to Koby.exe)",
+  "main": "launcher.js",
+  "bin": "launcher.js",
+  "scripts": {
+    "build:exe": "pkg launcher.js --targets node22-win-x64 --output ../dist/Koby.exe"
+  },
+  "dependencies": {
+    "adm-zip": "^0.5.16"
+  },
+  "devDependencies": {
+    "@yao-pkg/pkg": "^6.4.0"
+  },
+  "pkg": {
+    "assets": []
+  }
+}
