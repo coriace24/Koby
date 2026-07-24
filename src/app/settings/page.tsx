@@ -29,9 +29,9 @@ interface Settings {
   companyName: string | null;
   companyContact: string | null;
   brandColor: string | null;
-  usage: { runs: number; inputTokens: number; outputTokens: number; costUsd: number };
-  credits: number;
-  billingEnforced: boolean;
+  usage?: { runs: number; inputTokens: number; outputTokens: number; costUsd: number };
+  credits?: number;
+  billingEnforced?: boolean;
 }
 
 export default function SettingsPage() {
@@ -66,6 +66,8 @@ export default function SettingsPage() {
   }
 
   if (!s) return <main className="max-w-3xl mx-auto w-full px-6 py-8 text-slate-500">Loading…</main>;
+
+  const usage = s.usage ?? { runs: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 };
 
   return (
     <>
@@ -111,15 +113,15 @@ export default function SettingsPage() {
         <p className="text-xs text-slate-500 mb-4">
           Every AI run is metered — this is the record a pay-per-use plan will bill from.
           {s.billingEnforced
-            ? ` Billing is enforced: ${s.credits} credit${s.credits === 1 ? "" : "s"} remaining.`
+            ? ` Billing is enforced: ${s.credits ?? 0} credit${(s.credits ?? 0) === 1 ? "" : "s"} remaining.`
             : " Billing is not enforced yet (unlimited runs)."}
         </p>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
           {[
-            ["AI runs", String(s.usage.runs)],
-            ["Input tokens", s.usage.inputTokens.toLocaleString()],
-            ["Output tokens", s.usage.outputTokens.toLocaleString()],
-            ["Est. API cost", `$${s.usage.costUsd.toFixed(2)}`],
+            ["AI runs", String(usage.runs)],
+            ["Input tokens", usage.inputTokens.toLocaleString()],
+            ["Output tokens", usage.outputTokens.toLocaleString()],
+            ["Est. API cost", `$${usage.costUsd.toFixed(2)}`],
           ].map(([label, value]) => (
             <div key={label} className="rounded-lg bg-slate-50 border border-slate-100 p-3">
               <div className="text-xs text-slate-500">{label}</div>

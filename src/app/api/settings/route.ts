@@ -101,7 +101,18 @@ export async function PATCH(request: NextRequest) {
     });
   }
 
-  const updated = await prisma.userSettings.update({ where: { userId }, data });
-  const user = await prisma.user.findUnique({ where: { id: userId }, select: { name: true, email: true } });
-  return NextResponse.json({ ...updated, name: user?.name, email: user?.email });
+  const [updated, user, usage, credits] = await Promise.all([
+    prisma.userSettings.update({ where: { userId }, data }),
+    prisma.user.findUnique({ where: { id: userId }, select: { name: true, email: true } }),
+    usageSummary(userId),
+    creditBalance(userId),
+  ]);
+  return NextResponse.json({
+    ...updated,
+    name: user?.name,
+    email: user?.email,
+    usage,
+    credits,
+    billingEnforced: billingEnforced(),
+  });
 }
