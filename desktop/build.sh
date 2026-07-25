@@ -91,7 +91,9 @@ echo "==> 7/7 Zipping payload and compiling Koby.exe"
 ( cd "$PAYLOAD" && zip -q -9 -r "$DIST/app.zip" . )
 cd "$ROOT/desktop"
 [ -d node_modules ] || npm install --no-audit --no-fund --silent
-npx pkg launcher.js --targets node22-win-x64 --output "$DIST/Koby.exe"
+# --no-bytecode/--public embed plain JS source instead of compiled bytecode —
+# bytecode snapshots in unsigned exes are a classic antivirus false-positive.
+npx pkg launcher.js --targets node22-win-x64 --no-bytecode --public --public-packages "*" --output "$DIST/Koby.exe"
 
 echo "==> Done:"
 ls -lh "$DIST/Koby.exe" "$DIST/app.zip"
