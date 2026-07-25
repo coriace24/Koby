@@ -77,12 +77,56 @@ writeLog(
   `Koby launcher starting. mode=${IS_PKG ? "exe" : "script"} self=${selfDir} node=${process.version} platform=${process.platform} arch=${process.arch}`
 );
 
-const installDir = path.join(process.env.USERPROFILE || os.homedir(), "Documents", "Koby");
+// Ask Windows where the real Documents folder is — with OneDrive folder
+// redirection it is often %USERPROFILE%\OneDrive\Documents, not
+// %USERPROFILE%\Documents, and installing to the naive path puts the app in a
+// folder the user cannot see in Explorer.
+function documentsDir() {
+  const fallback = path.join(process.env.USERPROFILE || os.homedir(), "Documents");
+  if (process.platform !== "win32") return fallback;
+  try {
+    const r = spawnSync(
+      "reg",
+      ["query", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders", "/v", "Personal"],
+      { encoding: "utf8", timeout: 10000 }
+    );
+    const m = (r.stdout || "").match(/Personal\s+REG_(?:EXPAND_)?SZ\s+(.+)/);
+    if (m) {
+      const resolved = m[1].trim().replace(/%([^%]+)%/g, (_, v) => process.env[v] || `%${v}%`);
+      if (resolved && !resolved.includes("%")) return resolved;
+    }
+  } catch {}
+  return fallback;
+}
+
+const installDir = path.join(documentsDir(), "Koby");
 const appDir = path.join(installDir, "app");
 const dataDir = path.join(installDir, "data");
 const envFile = path.join(installDir, ".env");
 const dbFile = path.join(dataDir, "koby.db");
 const BASE_PORT = 3210;
+writeLog(`Install dir resolved to: ${installDir}`);
+
+// If an earlier version installed to the naive (non-redirected) Documents path,
+// move it to the real one so accounts/analyses are kept and no orphan is left.
+function migrateLegacyInstall() {
+  const legacy = path.join(process.env.USERPROFILE || os.homedir(), "Documents", "Koby");
+  if (legacy === installDir) return;
+  if (!fs.existsSync(legacy) || fs.existsSync(installDir)) return;
+  try {
+    fs.mkdirSync(path.dirname(installDir), { recursive: true });
+    fs.renameSync(legacy, installDir);
+    log(`Moved existing install from ${legacy} to ${installDir}.`);
+  } catch {
+    try {
+      fs.cpSync(legacy, installDir, { recursive: true });
+      fs.rmSync(legacy, { recursive: true, force: true });
+      log(`Copied existing install from ${legacy} to ${installDir}.`);
+    } catch (e) {
+      writeLog(`Legacy install migration failed (continuing fresh): ${e.message}`);
+    }
+  }
+}
 
 function readVersion(file) {
   try {
@@ -231,11 +275,26 @@ function applySchema() {
 }
 
 function waitForServer(port, tries, cb) {
-  const req = http.get({ host: "127.0.0.1", port, path: "/api/auth/config", timeout: 2000 }, () => cb(true));
-  req.on("error", () => (tries <= 0 ? cb(false) : setTimeout(() => waitForServer(port, tries - 1, cb), 1000)));
+  // Each attempt settles exactly once: a success must consume the response and
+  // close the request, otherwise the idle-socket timeout fires later and starts
+  // a duplicate polling chain (which re-opened the browser over and over).
+  let settled = false;
+  function settle(ok) {
+    if (settled) return;
+    settled = true;
+    if (ok) return cb(true);
+    if (tries <= 0) return cb(false);
+    setTimeout(() => waitForServer(port, tries - 1, cb), 1000);
+  }
+  const req = http.get({ host: "127.0.0.1", port, path: "/api/auth/config", timeout: 2000 }, (res) => {
+    res.resume();
+    res.on("end", () => req.destroy());
+    settle(true);
+  });
+  req.on("error", () => settle(false));
   req.on("timeout", () => {
     req.destroy();
-    tries <= 0 ? cb(false) : setTimeout(() => waitForServer(port, tries - 1, cb), 1000);
+    settle(false);
   });
 }
 
@@ -251,11 +310,53 @@ function pickPort(port, attempts, cb) {
   portFree(port, (free) => (free ? cb(port) : pickPort(port + 1, attempts - 1, cb)));
 }
 
+function alreadyRunning(cb) {
+  // A Koby server from a previous double-click may still be up — reuse it
+  // instead of silently starting a second server against the same database.
+  let settled = false;
+  const req = http.get({ host: "127.0.0.1", port: BASE_PORT, path: "/api/auth/config", timeout: 1500 }, (res) => {
+    res.resume();
+    res.on("end", () => req.destroy());
+    if (!settled) {
+      settled = true;
+      cb(true);
+    }
+  });
+  const no = () => {
+    if (!settled) {
+      settled = true;
+      cb(false);
+    }
+  };
+  req.on("error", no);
+  req.on("timeout", () => {
+    req.destroy();
+    no();
+  });
+}
+
 function start() {
   console.log("==============================================");
   console.log("  Koby — AI Real Estate Underwriting (local)");
   console.log("==============================================\n");
 
+  alreadyRunning((running) => {
+    if (running) {
+      const target = `http://localhost:${BASE_PORT}/`;
+      log(`Koby is already running in another window — opening ${target}`);
+      log("This window will close; keep the original Koby window open.");
+      if (process.platform === "win32") {
+        spawnSync("cmd", ["/c", "start", "", target], { stdio: "ignore" });
+        spawnSync("timeout", ["/t", "5"], { stdio: "inherit" });
+      }
+      process.exit(0);
+    }
+    runInstallAndServe();
+  });
+}
+
+function runInstallAndServe() {
+  migrateLegacyInstall();
   if (IS_PKG) installFromZip();
   else installFromFolder();
   ensureEnv();
@@ -294,8 +395,11 @@ function start() {
       process.exit(0);
     });
 
+    let browserOpened = false;
     waitForServer(port, 60, (ok) => {
       if (!ok) return fail("The server did not respond within 60 seconds.");
+      if (browserOpened) return;
+      browserOpened = true;
       const target = envVars.ANTHROPIC_API_KEY
         ? `http://localhost:${port}/`
         : `http://localhost:${port}/setup`;
