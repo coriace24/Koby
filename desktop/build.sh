@@ -80,6 +80,13 @@ cp "$DIST/template.db" "$PAYLOAD/template/koby.db"
 
 echo "$VERSION" > "$PAYLOAD/version.txt"
 
+# Fallback path: the extracted app.zip is runnable on its own via Start Koby.bat,
+# which uses the bundled (signed) node.exe — no exe packaging involved.
+cp "$ROOT/desktop/launcher.js" "$PAYLOAD/launcher.js"
+cp "$ROOT/desktop/start-koby.bat" "$PAYLOAD/Start Koby.bat"
+mkdir -p "$PAYLOAD/node_modules"
+cp -r "$ROOT/desktop/node_modules/adm-zip" "$PAYLOAD/node_modules/adm-zip"
+
 echo "==> 7/7 Zipping payload and compiling Koby.exe"
 ( cd "$PAYLOAD" && zip -q -9 -r "$DIST/app.zip" . )
 cd "$ROOT/desktop"

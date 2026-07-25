@@ -1,47 +1,88 @@
 /*
- * Koby desktop launcher (compiled to Koby.exe with @yao-pkg/pkg).
+ * Koby desktop launcher.
  *
- * What it does on every start:
- *   1. Installs/updates the app into  Documents\Koby  (first run, or when the
- *      app.zip next to the exe is a newer version). User data — database,
- *      uploads, .env — lives in Documents\Koby and is never touched by updates.
- *   2. Creates .env with a random session secret on first run.
- *   3. Applies the database schema (bundled Prisma CLI; falls back to copying a
- *      blank template database on first run).
- *   4. Starts the bundled Node server and opens your browser — the /setup page
- *      first if no Anthropic API key is saved yet.
+ * Runs in two interchangeable modes:
+ *   1. Compiled into Koby.exe (@yao-pkg/pkg): expects app.zip next to the exe,
+ *      extracts it into Documents\Koby\app.
+ *   2. Plain script inside the extracted app.zip, started by "Start Koby.bat"
+ *      via the bundled node.exe: copies its own folder into Documents\Koby\app.
+ *      This path has no exe packaging involved at all — it is the fallback when
+ *      Koby.exe won't start on a given machine (antivirus, SmartScreen, etc.).
+ *
+ * Both modes then do the same thing: keep user data (database, uploads, .env)
+ * in Documents\Koby outside the app folder, sync the database schema, start the
+ * bundled Node server, and open the browser (the /setup page first if no
+ * Anthropic API key is saved yet).
  */
 const fs = require("fs");
 const path = require("path");
+const os = require("os");
 const crypto = require("crypto");
 const http = require("http");
 const { spawn, spawnSync } = require("child_process");
-const AdmZip = require("adm-zip");
 
-const exeDir = path.dirname(process.execPath);
-const installDir = path.join(
-  process.env.USERPROFILE || require("os").homedir(),
-  "Documents",
-  "Koby"
+const IS_PKG = typeof process.pkg !== "undefined";
+// In pkg mode __dirname points into the virtual snapshot; the real location is the exe's dir.
+const selfDir = IS_PKG ? path.dirname(process.execPath) : __dirname;
+
+// ---- Logging: every line also goes to koby-launcher.log next to the exe/script,
+// so a crash that closes the console window still leaves evidence behind. ----
+let logStream = null;
+for (const candidate of [path.join(selfDir, "koby-launcher.log"), path.join(os.tmpdir(), "koby-launcher.log")]) {
+  try {
+    logStream = fs.createWriteStream(candidate, { flags: "w" });
+    break;
+  } catch {}
+}
+function writeLog(line) {
+  if (logStream) {
+    try {
+      logStream.write(line + "\n");
+    } catch {}
+  }
+}
+function log(msg) {
+  console.log(`[Koby] ${msg}`);
+  writeLog(`[Koby] ${msg}`);
+}
+
+function holdWindowOpen() {
+  try {
+    spawnSync("cmd", ["/c", "pause"], { stdio: "inherit" });
+  } catch {
+    try {
+      spawnSync(process.platform === "win32" ? "timeout" : "sleep", ["60"], { stdio: "inherit" });
+    } catch {}
+  }
+}
+
+function fail(msg) {
+  console.error(`\n[Koby] ERROR: ${msg}`);
+  writeLog(`[Koby] ERROR: ${msg}`);
+  console.error("[Koby] Details were saved to koby-launcher.log next to the launcher.");
+  console.error("[Koby] Press a key to close.");
+  holdWindowOpen();
+  process.exit(1);
+}
+
+// Any error we did not anticipate must never flash-close the window silently.
+process.on("uncaughtException", (err) => {
+  fail(`Unexpected error: ${err && err.stack ? err.stack : err}`);
+});
+process.on("unhandledRejection", (err) => {
+  fail(`Unexpected error (async): ${err && err.stack ? err.stack : err}`);
+});
+
+writeLog(
+  `Koby launcher starting. mode=${IS_PKG ? "exe" : "script"} self=${selfDir} node=${process.version} platform=${process.platform} arch=${process.arch}`
 );
+
+const installDir = path.join(process.env.USERPROFILE || os.homedir(), "Documents", "Koby");
 const appDir = path.join(installDir, "app");
 const dataDir = path.join(installDir, "data");
 const envFile = path.join(installDir, ".env");
 const dbFile = path.join(dataDir, "koby.db");
 const BASE_PORT = 3210;
-
-function log(msg) {
-  console.log(`[Koby] ${msg}`);
-}
-
-function fail(msg) {
-  console.error(`\n[Koby] ERROR: ${msg}`);
-  console.error("[Koby] Press Enter to close.");
-  try {
-    spawnSync("cmd", ["/c", "pause"], { stdio: "inherit" });
-  } catch {}
-  process.exit(1);
-}
 
 function readVersion(file) {
   try {
@@ -51,10 +92,14 @@ function readVersion(file) {
   }
 }
 
-function installOrUpdate() {
-  const zipPath = path.join(exeDir, "app.zip");
+function installedOk() {
+  return fs.existsSync(path.join(appDir, "server", "server.js"));
+}
+
+function installFromZip() {
+  const zipPath = path.join(selfDir, "app.zip");
   if (!fs.existsSync(zipPath)) {
-    if (fs.existsSync(path.join(appDir, "server", "server.js"))) {
+    if (installedOk()) {
       log("app.zip not found next to Koby.exe — starting the installed copy.");
       return;
     }
@@ -62,17 +107,20 @@ function installOrUpdate() {
       "app.zip was not found next to Koby.exe. Keep Koby.exe and app.zip in the same folder (download both from the Application repo)."
     );
   }
-
+  let AdmZip;
+  try {
+    AdmZip = require("adm-zip");
+  } catch (e) {
+    fail(`Could not load the bundled zip module: ${e.message}`);
+  }
   const zip = new AdmZip(zipPath);
   const entry = zip.getEntry("version.txt");
   const zipVersion = entry ? zip.readAsText(entry).trim() : "unknown";
   const installedVersion = readVersion(path.join(appDir, "version.txt"));
-
-  if (installedVersion === zipVersion && fs.existsSync(path.join(appDir, "server", "server.js"))) {
+  if (installedVersion === zipVersion && installedOk()) {
     log(`App is up to date (version ${installedVersion}).`);
     return;
   }
-
   log(
     installedVersion
       ? `Updating app ${installedVersion} -> ${zipVersion} …`
@@ -81,6 +129,30 @@ function installOrUpdate() {
   fs.rmSync(appDir, { recursive: true, force: true });
   fs.mkdirSync(appDir, { recursive: true });
   zip.extractAllTo(appDir, true);
+  log("Install complete.");
+}
+
+function installFromFolder() {
+  // Script mode: this file sits inside the extracted app.zip — the folder IS the payload.
+  const srcVersion = readVersion(path.join(selfDir, "version.txt"));
+  if (!srcVersion || !fs.existsSync(path.join(selfDir, "server", "server.js"))) {
+    fail(
+      "This launcher must run from inside the extracted app.zip folder (server\\ and version.txt were not found next to it)."
+    );
+  }
+  const installedVersion = readVersion(path.join(appDir, "version.txt"));
+  if (installedVersion === srcVersion && installedOk()) {
+    log(`App is up to date (version ${installedVersion}).`);
+    return;
+  }
+  log(
+    installedVersion
+      ? `Updating app ${installedVersion} -> ${srcVersion} …`
+      : `Installing Koby ${srcVersion} into ${installDir} … (first install copies ~300 MB, give it a minute)`
+  );
+  fs.rmSync(appDir, { recursive: true, force: true });
+  fs.mkdirSync(appDir, { recursive: true });
+  fs.cpSync(selfDir, appDir, { recursive: true });
   log("Install complete.");
 }
 
@@ -116,7 +188,8 @@ function dbUrl() {
 }
 
 function nodeExe() {
-  return path.join(appDir, "node", "node.exe");
+  // KOBY_NODE_BIN lets the build machine test this script with its own node.
+  return process.env.KOBY_NODE_BIN || path.join(appDir, "node", "node.exe");
 }
 
 function applySchema() {
@@ -135,14 +208,17 @@ function applySchema() {
   const engine = path.join(appDir, "engines", "schema-engine-windows.exe");
   if (!fs.existsSync(cli)) return;
   log("Checking database schema…");
+  const env = {
+    ...process.env,
+    DATABASE_URL: dbUrl(),
+    PRISMA_HIDE_UPDATE_MESSAGE: "1",
+    CI: "1",
+  };
+  if (fs.existsSync(engine) && !process.env.KOBY_NODE_BIN) {
+    env.PRISMA_SCHEMA_ENGINE_BINARY = engine;
+  }
   const r = spawnSync(nodeExe(), [cli, "db", "push", "--skip-generate", `--schema=${schema}`], {
-    env: {
-      ...process.env,
-      DATABASE_URL: dbUrl(),
-      PRISMA_SCHEMA_ENGINE_BINARY: fs.existsSync(engine) ? engine : undefined,
-      PRISMA_HIDE_UPDATE_MESSAGE: "1",
-      CI: "1",
-    },
+    env,
     stdio: ["ignore", "pipe", "pipe"],
     timeout: 120000,
   });
@@ -150,14 +226,12 @@ function applySchema() {
     log("Database schema is up to date.");
   } else {
     log("Schema check could not run — continuing with the existing database.");
-    if (r.stderr) log(String(r.stderr).slice(0, 400));
+    if (r.stderr) writeLog(String(r.stderr).slice(0, 1000));
   }
 }
 
 function waitForServer(port, tries, cb) {
-  const req = http.get({ host: "127.0.0.1", port, path: "/api/auth/config", timeout: 2000 }, () =>
-    cb(true)
-  );
+  const req = http.get({ host: "127.0.0.1", port, path: "/api/auth/config", timeout: 2000 }, () => cb(true));
   req.on("error", () => (tries <= 0 ? cb(false) : setTimeout(() => waitForServer(port, tries - 1, cb), 1000)));
   req.on("timeout", () => {
     req.destroy();
@@ -182,11 +256,8 @@ function start() {
   console.log("  Koby — AI Real Estate Underwriting (local)");
   console.log("==============================================\n");
 
-  if (process.platform !== "win32") {
-    log("Note: this launcher is built for Windows; paths assume Documents\\Koby.");
-  }
-
-  installOrUpdate();
+  if (IS_PKG) installFromZip();
+  else installFromFolder();
   ensureEnv();
   applySchema();
 
@@ -209,8 +280,15 @@ function start() {
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
-    child.stdout.on("data", (d) => process.stdout.write(d));
-    child.stderr.on("data", (d) => process.stderr.write(d));
+    child.stdout.on("data", (d) => {
+      process.stdout.write(d);
+      writeLog(String(d).trimEnd());
+    });
+    child.stderr.on("data", (d) => {
+      process.stderr.write(d);
+      writeLog(String(d).trimEnd());
+    });
+    child.on("error", (e) => fail(`Could not start the bundled Node runtime: ${e.message}`));
     child.on("exit", (code) => {
       if (code !== 0) fail(`The server stopped unexpectedly (code ${code}). See messages above.`);
       process.exit(0);
