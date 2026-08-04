@@ -1641,3 +1641,46 @@ Tell exacty what the AI analysis fearture is analysing in imported doc. Should t
 Let me re-read the exact extraction prompt and the documents-mode math so I describe precisely what happens, not roughly:
 Now I have the exact picture. Let me update the chat backup (standing rule) and then give you the full answer:
 
+----- CLAUDE  (2026-08-04 01:07 UTC) -----
+Here's exactly what the AI analysis does with imported documents, and why your calculator-sheet upload gives different numbers than the deal calculator.
+
+## What the AI extracts — precisely
+
+When you click "Run AI analysis" on the documents tab, Claude reads every uploaded file and must fill this exact structure (nothing more, nothing less):
+
+- **Income (4 annual lines):** gross potential rent, actual collected rent, vacancy loss, other income
+- **Expenses (9 annual lines):** property taxes, insurance, utilities, repairs & maintenance, management fees, payroll, landscaping, administrative, other
+- **Rent roll stats:** unit count, average in-place rent per occupied unit, occupancy %
+- For **every number**: a source citation (which document, which row); if a value isn't in the documents it must write $0 + "NOT FOUND" + raise a data flag — it is explicitly forbidden from inventing numbers
+- It annualizes partial-year data (with a flag) and flags anything questionable (e.g. insurance suspiciously low, rent roll and T-12 disagreeing)
+
+Those extracted figures then go into the **same deterministic engine** the deal calculator uses. The AI never computes NOI or cap rate itself — it only supplies inputs.
+
+## What the documents should contain
+
+Content matters, layout doesn't (PDF, Excel, CSV all fine):
+
+- **Rent roll** = a unit-by-unit listing: unit number, type, monthly rent, occupied/vacant. That's where unit count, average rent, and occupancy come from.
+- **T-12** = twelve months of *actual operating history*: rent collected, other income, and expense lines by month or with annual totals.
+
+## Why your test gave different results — this is the expected behavior, not a bug
+
+You uploaded the **Excel calculator template** as if it were a rent roll/T-12. But that sheet is a *what-if worksheet full of assumptions*, not a property's operating statements — so the AI had to guess how its cells map onto the statement structure above, and several mappings legitimately diverge from the manual tab's math:
+
+1. **Vacancy:** the manual tab applies your vacancy % to the unit-mix rent. In documents mode, vacancy is whatever the AI found as a "vacancy loss" line — and if it found an "actual collected rent" figure, the engine uses that directly and **ignores vacancy entirely** (real collections already include vacancy). Different route → different effective income.
+2. **Expense buckets:** the Excel's ~11 cost rows get squeezed into 9 categories; "misc/capex"-type rows can land in different buckets or get flagged NOT FOUND.
+3. **Anything the sheet doesn't state** becomes $0 + a flag, where the manual tab would use your typed value.
+
+So the two tabs are, by design, **two independent data sources**: manual = "what I assume", documents = "what the papers actually say". They only produce identical results if the inputs are literally identical. Comparing them side by side is actually the app's core workflow — the gap between broker assumptions and documented actuals is the interesting part.
+
+## What to do
+
+- To reproduce the Excel exactly: use the **Manual entry tab** (Test B in `samples/README.md` matches it to the cent — that's what the deal calculator was built for).
+- To test the documents flow: upload real statements — or the provided `sample-rent-roll.xlsx` + `sample-t12.xlsx`, which are shaped like real ones.
+- To see how the AI mapped your calculator sheet: in **Extracted financials**, hover any value — the tooltip shows the exact source row it cited, and clicking lets you override it.
+
+Don't upload the calculator template as a rent roll/T-12 going forward — it will always produce a divergent, heavily-flagged extraction, because it isn't the document type the analysis is built to read.
+
+----- USER  (2026-08-04 01:15 UTC) -----
+No that's not my request. Tell exacty what the AI analysis feature is analysing in imported doc. Should the doc have a specific content, or be having any type of content, since we run calculation manually (with same data) offline with the provided sheet calculator(that served to create the deal calculator) and we also AI analysis but output or result are not the same.
+
