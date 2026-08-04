@@ -1623,3 +1623,21 @@ keep an updatable txt version of this whole chat from the very beginning going f
 ----- CLAUDE  (2026-08-03 14:02 UTC) -----
 Good idea — and it's recoverable from the very beginning: the session keeps a full internal transcript, including everything from before any summarization. I'll build a readable text export from it, store it in the Koby repo, and refresh it at the end of every prompt from now on (same standing treatment as the samples folder).
 
+----- CLAUDE  (2026-08-03 14:03 UTC) -----
+Done. Your chat backup is live and the standing rule is in place.
+
+**What exists now:** `chat-backup/chat-history.txt` in the Koby repo — the complete conversation from your very first message (the PRD upload on July 17) through this one: 164 messages in order, each stamped with who spoke and when. Screenshots and file uploads appear as placeholders like `[screenshot attached]`; tool activity and code output are omitted so it reads as the actual dialogue. It recovered the full early history too, since the session keeps an internal transcript even for parts that were later summarized.
+
+**The standing rule going forward:** at the end of every prompt I complete, I regenerate the file from the session transcript and push it — same automatic treatment as the samples folder and the Application repo. The generator script (`chat-backup/export_chat.py`) is committed alongside it, so the process survives anything happening to this working environment.
+
+**To read it:** open the Koby repo on GitHub → `chat-backup` → `chat-history.txt` — or after a `git pull`, it's right in your project folder.
+
+One honest caveat: entries in the backup always appear one prompt behind — this very exchange gets captured when I update the file at the end of your *next* prompt, since I can't export a reply I haven't finished writing.
+
+----- USER  (2026-08-04 01:05 UTC) -----
+Tell exacty what the AI analysis fearture is analysing in imported doc. Should the doc have a specific content, or be having any type of content, since we run with the provided sheet calculator(that served to create the deal calculator) and AI analysis but output or result are not the same.
+
+----- CLAUDE  (2026-08-04 01:06 UTC) -----
+Let me re-read the exact extraction prompt and the documents-mode math so I describe precisely what happens, not roughly:
+Now I have the exact picture. Let me update the chat backup (standing rule) and then give you the full answer:
+
