@@ -1684,3 +1684,99 @@ Don't upload the calculator template as a rent roll/T-12 going forward — it wi
 ----- USER  (2026-08-04 01:15 UTC) -----
 No that's not my request. Tell exacty what the AI analysis feature is analysing in imported doc. Should the doc have a specific content, or be having any type of content, since we run calculation manually (with same data) offline with the provided sheet calculator(that served to create the deal calculator) and we also AI analysis but output or result are not the same.
 
+----- CLAUDE  (2026-08-04 01:15 UTC) -----
+Understood — you filled the Excel calculator by hand with the same property data, uploaded documents to the app, ran the AI analysis, and the two don't agree. Let me answer both parts exactly.
+
+## 1. Exactly what the AI analyzes in an imported document
+
+The AI does **no underwriting math at all**. Its only job is to find and copy out **17 specific numbers** from your files:
+
+| Group | Fields it hunts for |
+|---|---|
+| Income (annual) | gross potential rent · **actual collected rent** · vacancy loss · other income |
+| Expenses (annual) | property taxes · insurance · utilities · repairs & maintenance · management fees · payroll · landscaping · administrative · other |
+| Rent roll | unit count · average in-place rent per occupied unit · occupancy % |
+
+Each number must carry a citation (document + row it came from). Anything it can't find becomes **$0 + a "NOT FOUND" flag** — it is forbidden from inventing values. Those 17 numbers are then fed into the *same* calculation engine the deal calculator uses.
+
+**So: yes, the content must be specific.** It doesn't care about layout or file format, but the files must actually *be* a rent roll (unit-by-unit rents and occupancy) and a T-12 (twelve months of real income/expense history). Any other content gets force-fitted into those 17 slots, with zeros and flags where it doesn't fit.
+
+## 2. Why your offline Excel and the AI analysis disagree — even with "the same data"
+
+Three concrete reasons, in order of impact:
+
+**a) Different income basis — this is the big one.** Your Excel computes income as *scheduled rent − an assumed vacancy %*. But when a T-12 contains **actual collected rent**, the app deliberately uses that real number instead, and ignores the vacancy assumption (real collections already contain the real vacancy). Same property, two legitimate answers: the Excel says "what it should collect," the documents say "what it did collect." Every downstream number (NOI, cap rate, DSCR, cash flow) shifts with it.
+
+**b) Two formulas that intentionally differ from the Excel** (I flagged these when we audited formula coverage):
+- **Cash-on-cash**: the Excel divides by *down payment only*; the app divides by *total cash needed* (down payment + closing + carrying + renovation) — more conservative, so the app's % is lower whenever those extras aren't zero.
+- **Break-even occupancy**: the app uses the textbook formula (against gross scheduled income); the Excel used effective income — on our reference deal that's 84.6% vs 89.0%.
+
+**c) Extraction slotting.** The Excel's ~11 expense rows map into the app's 9 buckets, and any line the AI couldn't locate in your documents is $0 + flag rather than the number you typed into Excel.
+
+Everything else — monthly payment, debt service, NOI given the same income/expenses, cap rate, DSCR, valuation matrix — is locked to the Excel to the cent by 22 automated tests.
+
+## How to pinpoint your exact discrepancy
+
+Open **Extracted financials** on the documents tab and compare line-by-line against what you typed in Excel — hover any value to see the exact row it was pulled from, and click to override it. In particular compare *effective gross income*: if the app's is your Excel's "scheduled − vacancy" ± the difference between assumed and actual vacancy, that's cause (a) and both numbers are "right."
+
+If you tell me the specific figures that didn't match (or screenshot both sides), I'll reconcile each line for you and tell you exactly which of the three causes produced it.
+
+----- USER  (2026-08-08 20:24 UTC) -----
+any recommendation irrespective of content type of uploaded files and manually input data? if yes show before I tell you to execute
+
+----- CLAUDE  (2026-08-08 20:24 UTC) -----
+Yes — I have five recommendations. All of them attack the same root problem you just experienced: **the app computes correctly, but it doesn't tell you which numbers it chose, where they came from, or why two paths disagree** — and that's true no matter what people upload or type. Here's what I'd build, in priority order. Review it; nothing gets executed until you say so.
+
+---
+
+**1. Document sanity check before the AI runs (prevents garbage-in silently).**
+When files are uploaded, a cheap first-pass check classifies each one: *"looks like a rent roll" / "looks like a T-12" / "looks like a calculator or assumption worksheet" / "unrecognized."* If what you labeled "T-12" doesn't look like one, the app warns you **before** spending an AI credit: "This file looks like a calculation worksheet, not an operating statement — extraction will likely be incomplete. Run anyway?" That single guard would have flagged your Excel-upload test instantly.
+
+**2. Extraction coverage banner (instantly explains output gaps).**
+After every AI run, one line at the top of the results: **"14 of 17 fields found · 3 defaulted to $0 (payroll, other income, vacancy loss) · income basis: actual collections."** Today you must hunt through the flags to learn this; the banner makes "why is NOI different" answerable in one glance.
+
+**3. Income-basis switch: "actual collections" vs "scheduled − vacancy" (makes the app reproduce your Excel exactly).**
+A toggle on the documents tab controlling the biggest divergence you found. Default stays *actual collections* (that's the honest underwriting basis), but flipping it recomputes everything the Excel way — same engine, same data, matching outputs. Line one of the results says which basis is active.
+
+**4. Manual-vs-Documents reconciliation panel (turns the discrepancy into the feature).**
+When both tabs have data, a side-by-side table: effective income, expenses by bucket, NOI, cap rate, DSCR, cash-on-cash — manual column, documents column, delta column, with a one-line reason on each major gap ("documents include $9.5K laundry income not entered manually"). For a broker pitch this is gold: *assumptions vs. actuals* on one screen.
+
+**5. "How was this computed?" on every metric (kills all remaining mystery).**
+A small ⓘ on each stat (NOI, cash-on-cash, break-even occupancy…) showing the formula with the live numbers plugged in — e.g. cash-on-cash: *"$32,316 cash flow ÷ $260,000 total cash needed (down + closing + carrying + reno) = 12.4%. Note: on down payment alone it would be 12.9% (the Excel convention)."* This permanently resolves the known formula-convention differences instead of documenting them in a README nobody reads.
+
+---
+
+My take on effort: items 2, 3, and 5 are small; 1 is medium (one extra cheap AI classification step, roughly a cent per upload, skippable); 4 is medium. Together they make the app trustworthy for *any* input quality — the app stops assuming clean inputs and starts showing its work.
+
+Tell me which ones to execute (or "all"), and I'll build them in that order, update the test kit, and push to both repos as usual.
+
+----- USER  (2026-08-08 20:46 UTC) -----
+[screenshot attached]
+Do ''all'', but bring these layout changes to the deal calculator (along with with the necessary changes) in the process as well: 
+
+-cancel 'NNN/utility fee' in the row
+-we must be able to have '+add other income type' in the section of 'other income'
+-'Unit mix & rents ($/month)' part should be put in a global section label  of 'income' (if that is what really makes sense)
+-'Approximate annual operating costs ($/year)' part should be put in a global section label of 'expenses' (if that is what really makes sense)
+
+the deal calculator has to continue functionning as the excel that was provided
+audit after implementation
+
+----- CLAUDE  (2026-08-08 20:47 UTC) -----
+Executing all five recommendations plus your calculator layout changes. Plan: schema first, then engine/metrics, AI classification, API routes, UI restructure, tests, an audit pass (code review) as you asked, then rebuild the desktop package and push everything. Starting with the schema:
+
+----- CLAUDE  (2026-08-08 20:49 UTC) -----
+Now the document classifier in ai.ts (task #20):
+Now wire classification into the documents upload route:
+
+----- CLAUDE  (2026-08-08 20:50 UTC) -----
+Now the main UI work in AnalysisDetail.tsx — types first, then the calculator restructure and the four display features:
+
+----- CLAUDE  (2026-08-08 20:52 UTC) -----
+Now the coverage banner and income-basis toggle for the documents tab:
+Now the reconciliation panel — shown when both sources have data:
+
+----- CLAUDE  (2026-08-08 20:59 UTC) -----
+Fixing a typo I just introduced (`Anthml` → `Anthropic`):
+Docs updates:
+
