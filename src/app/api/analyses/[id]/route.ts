@@ -99,6 +99,29 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   if (b.manualOpex && typeof b.manualOpex === "object") {
     data.manualOpex = JSON.stringify(b.manualOpex);
   }
+  // Itemized other income; otherIncomeMonthly stays the engine-facing total.
+  if (Array.isArray(b.otherIncomeItems)) {
+    const items = b.otherIncomeItems
+      .filter((r: unknown) => r && typeof r === "object")
+      .slice(0, 20)
+      .map((r: Record<string, unknown>) => ({
+        label: typeof r.label === "string" ? r.label.slice(0, 60) : "",
+        monthly: Math.max(0, Number(r.monthly) || 0),
+      }))
+      .filter((r: { label: string; monthly: number }) => r.label || r.monthly > 0);
+    data.otherIncomeItems = items.length > 0 ? JSON.stringify(items) : null;
+    data.otherIncomeMonthly = items.length > 0
+      ? items.reduce((s: number, r: { monthly: number }) => s + r.monthly, 0)
+      : null;
+  }
+  // Documents-mode income convention: actual collections (default) vs scheduled − vacancy.
+  if ("incomeBasis" in b) {
+    if (b.incomeBasis === "scheduled" || b.incomeBasis === "actual" || b.incomeBasis === null) {
+      data.incomeBasis = b.incomeBasis === "actual" ? null : b.incomeBasis;
+    } else {
+      return NextResponse.json({ error: "incomeBasis must be \"actual\" or \"scheduled\"." }, { status: 400 });
+    }
+  }
 
   const updated = await prisma.analysis.update({ where: { id }, data, include: { documents: true } });
   const extraction = parseExtraction(updated);

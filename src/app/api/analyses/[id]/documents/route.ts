@@ -3,6 +3,8 @@ import path from "path";
 import { prisma } from "@/lib/db";
 import { getSessionUserId } from "@/lib/auth";
 import { saveUpload, deleteUpload } from "@/lib/storage";
+import { classifyDocument } from "@/lib/ai";
+import { recordAiRun } from "@/lib/billing";
 
 const MAX_FILE_BYTES = 30 * 1024 * 1024;
 
@@ -37,7 +39,29 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     return NextResponse.json({ error: "File exceeds the 30 MB limit." }, { status: 400 });
   }
 
-  const stored = await saveUpload(id, file.name, Buffer.from(await file.arrayBuffer()));
+  const buffer = Buffer.from(await file.arrayBuffer());
+  const stored = await saveUpload(id, file.name, buffer);
+
+  // Cheap AI sanity check: does the file's content match its label? Skipped
+  // gracefully when no API key is configured — uploads must never fail on it.
+  let detectedType: string | null = null;
+  let detectedNote: string | null = null;
+  try {
+    const { classification, usage } = await classifyDocument(
+      {
+        filename: file.name,
+        mimeType: file.type || "application/octet-stream",
+        docType,
+        path: stored.storageKey,
+      },
+      buffer
+    );
+    detectedType = classification.detectedType;
+    detectedNote = classification.note;
+    await recordAiRun({ userId, analysisId: id, mode: "classify", ...usage });
+  } catch {
+    // No key, model error, unreadable file — the upload still succeeds.
+  }
 
   const doc = await prisma.document.create({
     data: {
@@ -47,6 +71,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       docType,
       size: file.size,
       path: stored.storageKey,
+      detectedType,
+      detectedNote,
     },
   });
 

@@ -22,10 +22,15 @@ interface UnitMixRow {
   label: string;
   count: number;
   rent: number;
-  fee: number;
+  fee: number; // legacy — merged into rent on load, kept for API compatibility
+}
+interface OtherIncomeRow {
+  label: string;
+  monthly: number;
 }
 interface Metrics {
   dataSource: "documents" | "manual";
+  incomeBasis: "actual" | "scheduled";
   cashNeeded: {
     downPayment: number;
     closingCosts: number;
@@ -112,6 +117,8 @@ interface Doc {
   filename: string;
   docType: string;
   size: number;
+  detectedType: string | null;
+  detectedNote: string | null;
 }
 interface ShareLinkInfo {
   id: string;
@@ -126,6 +133,8 @@ interface AnalysisData {
   closingCosts: number | null;
   carryingCosts: number | null;
   otherIncomeMonthly: number | null;
+  otherIncomeItems: string | null;
+  incomeBasis: string | null;
   unitMix: string | null;
   manualOpex: string | null;
   units: number;
@@ -201,10 +210,13 @@ const card = "bg-white border border-slate-200 rounded-xl p-6";
 const inputCls =
   "w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500";
 
-function Stat({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
+function Stat({ label, value, accent, info }: { label: string; value: string; accent?: boolean; info?: string }) {
   return (
-    <div className="rounded-lg bg-slate-50 border border-slate-100 p-3">
-      <div className="text-xs text-slate-500">{label}</div>
+    <div className="rounded-lg bg-slate-50 border border-slate-100 p-3" title={info}>
+      <div className="text-xs text-slate-500">
+        {label}
+        {info && <span className="ml-1 text-slate-400 cursor-help">ⓘ</span>}
+      </div>
       <div className={`text-lg font-semibold ${accent ? "text-blue-800" : ""}`}>{value}</div>
     </div>
   );
@@ -230,6 +242,7 @@ export default function AnalysisDetail({ id }: { id: string }) {
   const [uploading, setUploading] = useState(false);
   const [savingAssumptions, setSavingAssumptions] = useState(false);
   const [mixRows, setMixRows] = useState<UnitMixRow[]>([]);
+  const [incomeRows, setIncomeRows] = useState<OtherIncomeRow[]>([]);
   const [savingCalc, setSavingCalc] = useState(false);
   const [tab, setTab] = useState<"manual" | "documents">("manual");
   const [shareLinks, setShareLinks] = useState<ShareLinkInfo[]>([]);
@@ -249,9 +262,21 @@ export default function AnalysisDetail({ id }: { id: string }) {
         setTab(d.extractionParsed || d.documents.length > 0 ? "documents" : "manual");
       }
       try {
-        setMixRows(d.unitMix ? JSON.parse(d.unitMix) : []);
+        // Merge the legacy per-unit fee into rent — the column is gone from the UI
+        // but older saved rows may still carry one; totals stay identical.
+        const rows: UnitMixRow[] = d.unitMix ? JSON.parse(d.unitMix) : [];
+        setMixRows(rows.map((r) => ({ ...r, rent: (r.rent || 0) + (r.fee || 0), fee: 0 })));
       } catch {
         setMixRows([]);
+      }
+      try {
+        const items: OtherIncomeRow[] = d.otherIncomeItems ? JSON.parse(d.otherIncomeItems) : [];
+        if (items.length === 0 && d.otherIncomeMonthly && d.otherIncomeMonthly > 0) {
+          items.push({ label: "Other income", monthly: d.otherIncomeMonthly });
+        }
+        setIncomeRows(items);
+      } catch {
+        setIncomeRows([]);
       }
     } else if (res.status === 404) {
       setError("Analysis not found.");
@@ -309,7 +334,7 @@ export default function AnalysisDetail({ id }: { id: string }) {
     const body = {
       unitMix: mixRows.filter((r) => r.count > 0 || r.rent > 0 || r.label),
       manualOpex,
-      otherIncomeMonthly: fd.get("otherIncomeMonthly") || null,
+      otherIncomeItems: incomeRows.filter((r) => r.label || r.monthly > 0),
     };
     const res = await fetch(`/api/analyses/${id}`, {
       method: "PATCH",
@@ -361,6 +386,16 @@ export default function AnalysisDetail({ id }: { id: string }) {
     }
     setRunning(false);
     await load();
+  }
+
+  async function setIncomeBasis(basis: "actual" | "scheduled") {
+    setError(null);
+    const res = await fetch(`/api/analyses/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ incomeBasis: basis }),
+    });
+    if (res.ok) setData(await res.json());
   }
 
   async function saveAssumptions(e: React.FormEvent<HTMLFormElement>) {
@@ -440,6 +475,43 @@ export default function AnalysisDetail({ id }: { id: string }) {
     (sum, r) => sum + (r.count || 0) * ((r.rent || 0) + (r.fee || 0)),
     0
   );
+  const otherIncomeTotal = incomeRows.reduce((sum, r) => sum + (r.monthly || 0), 0);
+
+  // Extraction coverage: which of the 13 statement lines the AI actually found.
+  const coverage = (() => {
+    if (!ex) return null;
+    const lines: { key: string; label: string; found: boolean }[] = [];
+    for (const [section, labels] of [
+      ["income", INCOME_LABELS],
+      ["expenses", EXPENSE_LABELS],
+    ] as const) {
+      for (const [key, lbl] of Object.entries(labels)) {
+        const item = ex[section][key];
+        if (!item) continue;
+        const found = item.annualAmount !== 0 || !/not\s*found/i.test(item.source);
+        lines.push({ key, label: lbl, found });
+      }
+    }
+    const missing = lines.filter((l) => !l.found);
+    return { total: lines.length, found: lines.length - missing.length, missing };
+  })();
+
+  // Upload sanity check: content type detected by the AI vs the label chosen.
+  const docWarnings = data.documents
+    .filter((d) => {
+      if (!d.detectedType) return false;
+      if (d.detectedType === "CALC_WORKSHEET") return true;
+      if (d.docType === "RENT_ROLL" && d.detectedType !== "RENT_ROLL") return true;
+      if (d.docType === "T12" && d.detectedType !== "T12") return true;
+      return false;
+    })
+    .map((d) => ({
+      filename: d.filename,
+      message:
+        d.detectedType === "CALC_WORKSHEET"
+          ? `"${d.filename}" looks like a calculator/assumption worksheet, not a property record — extraction from it will likely be incomplete or misleading.`
+          : `"${d.filename}" is labeled ${DOC_TYPES.find(([v]) => v === d.docType)?.[1] ?? d.docType} but its content looks like ${(d.detectedType ?? "other").replace("_", " ").toLowerCase()}. ${d.detectedNote ?? ""}`,
+    }));
 
   return (
     <PageShell>
@@ -572,6 +644,16 @@ export default function AnalysisDetail({ id }: { id: string }) {
             ))}
           </ul>
         )}
+        {docWarnings.length > 0 && (
+          <div className="mb-4 space-y-2">
+            {docWarnings.map((w, i) => (
+              <div key={i} className="text-sm rounded-md border border-amber-200 bg-amber-50 text-amber-800 px-3 py-2">
+                ⚠ {w.message} You can still run the analysis, but expect data flags — or upload the
+                right document type.
+              </div>
+            ))}
+          </div>
+        )}
         <form onSubmit={upload} className="flex flex-wrap items-center gap-3">
           <input ref={fileRef} type="file" accept=".pdf,.xlsx,.xls,.csv" className="text-sm" required />
           <select ref={docTypeRef} className="rounded-md border border-slate-300 px-2 py-1.5 text-sm">
@@ -617,15 +699,17 @@ export default function AnalysisDetail({ id }: { id: string }) {
           operating costs. Metrics update on save; the AI can then write its analysis from these inputs.
         </p>
         <form onSubmit={saveCalculator}>
-          <h3 className="text-sm font-medium text-slate-500 mb-2">Unit mix & rents ($/month)</h3>
+          <h3 className="text-base font-semibold text-slate-800 border-b border-slate-200 pb-1 mb-3">
+            Income
+          </h3>
+          <h4 className="text-sm font-medium text-slate-500 mb-2">Unit mix & rents ($/month)</h4>
           <table className="w-full text-sm mb-2">
             <thead>
               <tr className="text-left text-xs text-slate-400">
                 <th className="pb-1">Unit type</th>
-                <th className="pb-1 w-20"># Units</th>
-                <th className="pb-1 w-28">Rent</th>
-                <th className="pb-1 w-28">NNN/utility fee</th>
-                <th className="pb-1 w-28 text-right">Monthly total</th>
+                <th className="pb-1 w-24"># Units</th>
+                <th className="pb-1 w-32">Rent</th>
+                <th className="pb-1 w-32 text-right">Monthly total</th>
                 <th className="w-8"></th>
               </tr>
             </thead>
@@ -662,16 +746,6 @@ export default function AnalysisDetail({ id }: { id: string }) {
                       }
                     />
                   </td>
-                  <td className="py-1 pr-2">
-                    <input
-                      type="number" min="0" step="any"
-                      className="w-full rounded border border-slate-200 px-2 py-1"
-                      value={r.fee || ""}
-                      onChange={(e) =>
-                        setMixRows(mixRows.map((x, j) => (j === i ? { ...x, fee: parseFloat(e.target.value) || 0 } : x)))
-                      }
-                    />
-                  </td>
                   <td className="py-1 text-right font-medium">
                     {money((r.count || 0) * ((r.rent || 0) + (r.fee || 0)))}
                   </td>
@@ -688,7 +762,7 @@ export default function AnalysisDetail({ id }: { id: string }) {
                 </tr>
               ))}
               <tr className="border-t border-slate-200">
-                <td colSpan={4} className="py-1.5">
+                <td colSpan={3} className="py-1.5">
                   <button
                     type="button"
                     onClick={() => setMixRows([...mixRows, { label: "", count: 1, rent: 0, fee: 0 }])}
@@ -702,25 +776,72 @@ export default function AnalysisDetail({ id }: { id: string }) {
               </tr>
             </tbody>
           </table>
-          <div className="grid sm:grid-cols-3 gap-4 mb-4">
-            <div>
-              <label className="block text-xs font-medium mb-1">Other income ($/month)</label>
-              <input
-                name="otherIncomeMonthly" type="number" min="0" step="any"
-                defaultValue={data.otherIncomeMonthly ?? ""}
-                placeholder="Laundry, parking, pets…"
-                className={inputCls}
-              />
-            </div>
-            <div className="sm:col-span-2 text-xs text-slate-500 self-end pb-2">
-              A vacancy haircut of {data.vacancyAssumption ?? 5}% (editable in Assumptions) is applied to
-              the unit-mix rent.
-            </div>
-          </div>
 
-          <h3 className="text-sm font-medium text-slate-500 mb-2">
-            Approximate annual operating costs ($/year)
+          <h4 className="text-sm font-medium text-slate-500 mb-2">Other income ($/month)</h4>
+          <table className="w-full text-sm mb-1">
+            <tbody>
+              {incomeRows.map((r, i) => (
+                <tr key={i} className="border-t border-slate-100">
+                  <td className="py-1 pr-2">
+                    <input
+                      className="w-full rounded border border-slate-200 px-2 py-1"
+                      value={r.label}
+                      placeholder="e.g. Laundry, parking, pet fees, storage"
+                      onChange={(e) =>
+                        setIncomeRows(incomeRows.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))
+                      }
+                    />
+                  </td>
+                  <td className="py-1 w-32">
+                    <input
+                      type="number" min="0" step="any"
+                      className="w-full rounded border border-slate-200 px-2 py-1"
+                      value={r.monthly || ""}
+                      onChange={(e) =>
+                        setIncomeRows(
+                          incomeRows.map((x, j) => (j === i ? { ...x, monthly: parseFloat(e.target.value) || 0 } : x))
+                        )
+                      }
+                    />
+                  </td>
+                  <td className="py-1 w-8 text-right">
+                    <button
+                      type="button"
+                      onClick={() => setIncomeRows(incomeRows.filter((_, j) => j !== i))}
+                      className="text-red-500 hover:text-red-700"
+                      title="Remove row"
+                    >
+                      ×
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              <tr className="border-t border-slate-200">
+                <td className="py-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setIncomeRows([...incomeRows, { label: "", monthly: 0 }])}
+                    className="text-sm text-blue-700 hover:underline"
+                  >
+                    + Add other income type
+                  </button>
+                </td>
+                <td className="py-1.5 text-right font-semibold w-32">{money(otherIncomeTotal)}</td>
+                <td className="w-8"></td>
+              </tr>
+            </tbody>
+          </table>
+          <p className="text-xs text-slate-500 mb-5">
+            A vacancy haircut of {data.vacancyAssumption ?? 5}% (editable in Assumptions) is applied to
+            the unit-mix rent. Other income is not reduced for vacancy.
+          </p>
+
+          <h3 className="text-base font-semibold text-slate-800 border-b border-slate-200 pb-1 mb-3">
+            Expenses
           </h3>
+          <h4 className="text-sm font-medium text-slate-500 mb-2">
+            Approximate annual operating costs ($/year)
+          </h4>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
             {OPEX_FIELDS.map(([key, lbl]) => (
               <div key={key}>
@@ -763,6 +884,45 @@ export default function AnalysisDetail({ id }: { id: string }) {
         <section className={`${card} text-sm text-slate-500`}>
           No document-based figures yet — upload a Rent Roll and T-12 above and click{" "}
           <b>Run AI analysis</b>. (The Manual entry tab works without documents.)
+        </section>
+      )}
+
+      {/* Extraction coverage + income basis (documents tab) */}
+      {tab === "documents" && ex && coverage && (
+        <section className={`${card} space-y-3`}>
+          <div className="text-sm">
+            <span className="font-semibold">Extraction coverage: </span>
+            {coverage.found} of {coverage.total} financial line items found in the documents
+            {coverage.missing.length > 0 && (
+              <>
+                {" · "}
+                <span className="text-amber-700">
+                  defaulted to $0: {coverage.missing.map((l) => l.label).join(", ")}
+                </span>
+              </>
+            )}
+            . Every $0 line lowers or skews the results below — click a value in Extracted
+            financials to fill gaps manually.
+          </div>
+          <div className="flex flex-wrap items-center gap-3 text-sm border-t border-slate-100 pt-3">
+            <span className="font-semibold">Income basis:</span>
+            {(
+              [
+                ["actual", "Actual collections (what the T-12 shows was collected)"],
+                ["scheduled", "Scheduled rent − vacancy (the Excel-calculator convention)"],
+              ] as const
+            ).map(([value, label]) => (
+              <label key={value} className="flex items-center gap-1.5 cursor-pointer">
+                <input
+                  type="radio"
+                  name="incomeBasis"
+                  checked={(data.incomeBasis === "scheduled" ? "scheduled" : "actual") === value}
+                  onChange={() => setIncomeBasis(value)}
+                />
+                {label}
+              </label>
+            ))}
+          </div>
         </section>
       )}
 
@@ -809,17 +969,59 @@ export default function AnalysisDetail({ id }: { id: string }) {
             </span>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <Stat label="NOI (annual)" value={money(m.base.noi)} accent />
-            <Stat label="Cap rate" value={pct(m.base.capRate)} accent />
-            <Stat label="DSCR" value={ratio(m.base.dscr)} accent />
-            <Stat label="Cash-on-cash" value={pct(m.base.cashOnCashReturn)} accent />
-            <Stat label="Effective gross income" value={money(m.base.effectiveGrossIncome)} />
+            <Stat
+              label="NOI (annual)"
+              value={money(m.base.noi)}
+              accent
+              info={`Effective gross income ${money(m.base.effectiveGrossIncome)} − operating expenses ${money(m.base.totalOperatingExpenses)} = ${money(m.base.noi)}. Debt service is not part of NOI.`}
+            />
+            <Stat
+              label="Cap rate"
+              value={pct(m.base.capRate)}
+              accent
+              info={`NOI ${money(m.base.noi)} ÷ offer price ${money(data.purchasePrice)} = ${pct(m.base.capRate)}.`}
+            />
+            <Stat
+              label="DSCR"
+              value={ratio(m.base.dscr)}
+              accent
+              info={`NOI ${money(m.base.noi)} ÷ annual debt service ${money(m.base.annualDebtService)} = ${ratio(m.base.dscr)}. Lenders usually want 1.20–1.25+.`}
+            />
+            <Stat
+              label="Cash-on-cash"
+              value={pct(m.base.cashOnCashReturn)}
+              accent
+              info={`Cash flow after debt ${money(m.base.cashFlowAfterDebtService)} ÷ total cash needed ${money(m.cashNeeded.total)} (down + closing + carrying + reno) = ${pct(m.base.cashOnCashReturn)}. On down payment alone (the Excel convention): ${data.downPayment > 0 ? pct((m.base.cashFlowAfterDebtService / data.downPayment) * 100) : "—"}.`}
+            />
+            <Stat
+              label="Effective gross income"
+              value={money(m.base.effectiveGrossIncome)}
+              info={
+                m.dataSource === "documents"
+                  ? m.incomeBasis === "scheduled"
+                    ? "Scheduled rent − vacancy + other income (basis switchable above)."
+                    : "Actual collected rent from the T-12 + other income (basis switchable above)."
+                  : `Unit-mix rent − ${data.vacancyAssumption ?? 5}% vacancy + other income.`
+              }
+            />
             <Stat label="Operating expenses" value={money(m.base.totalOperatingExpenses)} />
-            <Stat label="Annual debt service" value={money(m.base.annualDebtService)} />
+            <Stat
+              label="Annual debt service"
+              value={money(m.base.annualDebtService)}
+              info={`Monthly payment ${money(m.base.monthlyDebtService)} × 12 on ${money(data.loanAmount)} at ${data.interestRate}% over ${data.loanTermYears} years.`}
+            />
             <Stat label="Cash flow after debt" value={money(m.base.cashFlowAfterDebtService)} />
             <Stat label="Equity requirement" value={money(m.base.equityRequirement)} />
-            <Stat label="Expense ratio" value={pct(m.base.expenseRatio, 1)} />
-            <Stat label="Break-even occupancy" value={pct(m.base.breakEvenOccupancy, 1)} />
+            <Stat
+              label="Expense ratio"
+              value={pct(m.base.expenseRatio, 1)}
+              info={`Operating expenses ÷ effective gross income. 35–55% is typical for multifamily.`}
+            />
+            <Stat
+              label="Break-even occupancy"
+              value={pct(m.base.breakEvenOccupancy, 1)}
+              info={`(Operating expenses + debt service) ÷ gross scheduled income — the textbook basis. The Excel divides by effective income instead, which reads a few points higher.`}
+            />
             <Stat label="Monthly debt service" value={money(m.base.monthlyDebtService)} />
           </div>
           {data.targetReturn !== null && m.base.cashOnCashReturn !== null && (
@@ -958,6 +1160,78 @@ export default function AnalysisDetail({ id }: { id: string }) {
               </div>
             )}
           </div>
+        </section>
+      )}
+
+      {/* Manual vs Documents reconciliation */}
+      {data.metricsManual && data.metricsDocuments && (
+        <section className={card}>
+          <h2 className="font-semibold mb-1">Manual entry vs documents — reconciliation</h2>
+          <p className="text-xs text-slate-500 mb-4">
+            Your assumptions side by side with what the documents show. Gaps here are the story:
+            they are what to verify with the broker or seller.
+          </p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs text-slate-400">
+                  <th className="pb-1"></th>
+                  <th className="pb-1 text-right">Manual entry</th>
+                  <th className="pb-1 text-right">Documents</th>
+                  <th className="pb-1 text-right">Difference</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(
+                  [
+                    ["Effective gross income", (x: Metrics) => x.base.effectiveGrossIncome, money, true],
+                    ["Operating expenses", (x: Metrics) => x.base.totalOperatingExpenses, money, false],
+                    ["NOI", (x: Metrics) => x.base.noi, money, true],
+                    ["Cap rate", (x: Metrics) => x.base.capRate, (n: number | null) => pct(n), true],
+                    ["DSCR", (x: Metrics) => x.base.dscr, (n: number | null) => ratio(n), true],
+                    ["Cash flow after debt", (x: Metrics) => x.base.cashFlowAfterDebtService, money, true],
+                    ["Cash-on-cash", (x: Metrics) => x.base.cashOnCashReturn, (n: number | null) => pct(n), true],
+                  ] as [string, (x: Metrics) => number | null, (n: number | null) => string, boolean][]
+                ).map(([label, get, fmt, goodWhenHigher]) => {
+                  const a = get(data.metricsManual!);
+                  const b2 = get(data.metricsDocuments!);
+                  const diff = a !== null && b2 !== null ? b2 - a : null;
+                  const isMoney = fmt === money;
+                  const favorable = diff !== null && (goodWhenHigher ? diff > 0 : diff < 0);
+                  return (
+                    <tr key={label} className="border-t border-slate-100">
+                      <td className="py-1.5 pr-2">{label}</td>
+                      <td className="py-1.5 text-right">{fmt(a)}</td>
+                      <td className="py-1.5 text-right">{fmt(b2)}</td>
+                      <td
+                        className={`py-1.5 text-right font-medium ${
+                          diff === null || Math.abs(diff) < 0.005
+                            ? "text-slate-400"
+                            : favorable
+                              ? "text-green-700"
+                              : "text-red-600"
+                        }`}
+                      >
+                        {diff === null
+                          ? "—"
+                          : `${diff >= 0 ? "+" : "−"}${
+                              isMoney ? money(Math.abs(diff)) : Math.abs(diff).toFixed(2) + (label.includes("DSCR") ? "" : " pts")
+                            }`}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-xs text-slate-500 mt-3">
+            Documents column uses{" "}
+            {data.metricsDocuments.incomeBasis === "scheduled"
+              ? "scheduled rent − vacancy (Excel convention)"
+              : "actual collected rent"}
+            ; the manual column always uses your unit-mix rent − vacancy assumption. Income basis is
+            switchable on the Uploaded documents tab.
+          </p>
         </section>
       )}
 

@@ -59,6 +59,13 @@ The analysis page has two tabs: **Manual entry** (deal calculator, no documents 
 - `sample-rent-roll.xlsx` with document type **Rent Roll (required)**
 - `sample-t12.xlsx` with document type **T-12 Operating Statement (required)**
 
+### 3b. Upload sanity check (new)
+
+Each upload gets a cheap AI content check: if a file's content doesn't match its label
+(e.g. you upload a calculator worksheet as a T-12), an amber warning appears under the
+document list before you spend a full analysis run. The sample files are proper
+documents, so no warning should appear here.
+
 ### 4. Run the AI analysis
 
 Click **Run AI analysis** and wait 1–3 minutes. Expected results:
@@ -73,6 +80,23 @@ Click **Run AI analysis** and wait 1–3 minutes. Expected results:
 - **AI summary:** overview, opportunities (it should spot the below-market rents and the
   vacant unit), risks to investigate, and key assumptions. Per design, it never says
   "this is a good investment" — it reports what the numbers show.
+
+### 4b. Coverage, income basis, and reconciliation (new)
+
+After the AI run, three transparency features appear:
+
+- **Extraction coverage** (top of results): "12 of 13 financial line items found ·
+  defaulted to $0: Payroll" — instantly explains any gap between the app's numbers and
+  your own calculations.
+- **Income basis** toggle: *Actual collections* (default — what the T-12 shows was
+  really collected) vs *Scheduled rent − vacancy* (the Excel-calculator convention).
+  Flip it and every metric recomputes; this is the main reason document results differ
+  from a hand-filled calculator.
+- **Manual vs documents reconciliation**: once you've saved deal-calculator inputs AND
+  run a document analysis, a side-by-side table shows both sets of numbers with
+  differences — assumptions vs actuals on one screen.
+- Hover any metric's **ⓘ** to see its formula with the live numbers plugged in
+  (cash-on-cash also shows the down-payment-only variant the Excel uses).
 
 ### 5. Test the value-add engine
 
@@ -143,9 +167,12 @@ This reproduces the reference Excel deal calculator exactly. Create a new analys
 
 Then on the **Manual entry** tab, in the **Deal calculator** section (no documents needed):
 
-1. Add a unit-mix row: label `All units`, count `8`, rent `1350`, fee `0`
-2. Enter annual operating costs: property taxes `24000`, insurance `7000`,
-   repairs `8000`, landscaping `4800`, misc `1000` (leave the rest 0 — total $44,800)
+1. Under **Income**, add a unit-mix row: label `All units`, count `8`, rent `1350`
+   (other income: none — but note you can now itemize other income with
+   **+ Add other income type**, e.g. laundry and parking as separate lines)
+2. Under **Expenses**, enter annual operating costs: property taxes `24000`,
+   insurance `7000`, repairs `8000`, landscaping `4800`, misc `1000`
+   (leave the rest 0 — total $44,800)
 3. Click **Save & calculate**
 
 Optionally click **Run AI analysis on manual inputs** — the AI writes its

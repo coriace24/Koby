@@ -34,6 +34,7 @@ export interface MetricsOptions {
 
 export interface FullMetrics {
   dataSource: "documents" | "manual";
+  incomeBasis: "actual" | "scheduled"; // which income convention produced these numbers (documents mode)
   income: IncomeStatement;
   expenses: ExpenseStatement;
   base: UnderwritingResult;
@@ -87,12 +88,24 @@ export function parseManualOpex(analysis: Analysis): ExpenseStatement | null {
   }
 }
 
-function fromExtraction(extraction: Extraction): { income: IncomeStatement; expenses: ExpenseStatement } {
+function fromExtraction(
+  extraction: Extraction,
+  incomeBasis: "actual" | "scheduled",
+  vacancyPct: number
+): { income: IncomeStatement; expenses: ExpenseStatement } {
+  const gpr = extraction.income.grossPotentialRent.annualAmount;
+  const extractedVacancy = extraction.income.vacancyLoss.annualAmount;
+  // "scheduled" reproduces the Excel convention: scheduled rent less vacancy.
+  // Zeroing actual collections makes the engine fall back to GPR − vacancyLoss;
+  // when the documents had no vacancy line, apply the vacancy % assumption.
+  // If GPR itself wasn't extracted, the scheduled basis has nothing to stand on —
+  // fall back to actual collections rather than collapsing income to zero.
+  const scheduled = incomeBasis === "scheduled" && gpr > 0;
   return {
     income: {
-      grossPotentialRent: extraction.income.grossPotentialRent.annualAmount,
-      actualCollectedRent: extraction.income.actualCollectedRent.annualAmount,
-      vacancyLoss: extraction.income.vacancyLoss.annualAmount,
+      grossPotentialRent: gpr,
+      actualCollectedRent: scheduled ? 0 : extraction.income.actualCollectedRent.annualAmount,
+      vacancyLoss: scheduled && extractedVacancy <= 0 ? gpr * (vacancyPct / 100) : extractedVacancy,
       otherIncome: extraction.income.otherIncome.annualAmount,
     },
     expenses: {
@@ -135,18 +148,23 @@ export function computeMetrics(
   opts: MetricsOptions = {}
 ): FullMetrics | null {
   const wanted = opts.source ?? "auto";
+  const incomeBasis: "actual" | "scheduled" =
+    analysis.incomeBasis === "scheduled" ? "scheduled" : "actual";
+  const vacancyPct = analysis.vacancyAssumption ?? 5;
   let source: "documents" | "manual";
   let statements: { income: IncomeStatement; expenses: ExpenseStatement } | null;
   if (wanted === "documents") {
     source = "documents";
-    statements = extraction ? fromExtraction(extraction) : null;
+    statements = extraction ? fromExtraction(extraction, incomeBasis, vacancyPct) : null;
   } else if (wanted === "manual") {
     source = "manual";
     statements = fromManual(analysis);
   } else {
     // auto: documents win when analyzed; otherwise fall back to the manual deal calculator
     source = extraction ? "documents" : "manual";
-    statements = extraction ? fromExtraction(extraction) : fromManual(analysis);
+    statements = extraction
+      ? fromExtraction(extraction, incomeBasis, vacancyPct)
+      : fromManual(analysis);
   }
   if (!statements) return null;
 
@@ -222,6 +240,7 @@ export function computeMetrics(
 
   return {
     dataSource: source,
+    incomeBasis,
     income,
     expenses,
     base,

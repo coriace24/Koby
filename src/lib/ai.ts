@@ -87,12 +87,15 @@ function spreadsheetToText(data: Buffer): string {
   return text;
 }
 
-async function docContentBlocks(doc: DocInput): Promise<Anthropic.ContentBlockParam[]> {
+async function docContentBlocks(
+  doc: DocInput,
+  preloaded?: Buffer
+): Promise<Anthropic.ContentBlockParam[]> {
   const header: Anthropic.ContentBlockParam = {
     type: "text",
     text: `Document: "${doc.filename}" (declared type: ${doc.docType})`,
   };
-  const data = await readUpload(doc.path);
+  const data = preloaded ?? (await readUpload(doc.path));
   if (doc.mimeType === "application/pdf" || doc.filename.toLowerCase().endsWith(".pdf")) {
     return [
       header,
@@ -233,6 +236,73 @@ export async function extractFromDocuments(
   if (!text) throw new Error("AI extraction returned no output.");
   return {
     extraction: JSON.parse(text) as Extraction,
+    usage: {
+      model: response.model,
+      inputTokens: response.usage.input_tokens,
+      outputTokens: response.usage.output_tokens,
+    },
+  };
+}
+
+// ---------- Document sanity check (cheap, at upload time) ----------
+
+const CLASSIFY_SCHEMA = {
+  type: "object",
+  properties: {
+    detectedType: {
+      type: "string",
+      enum: ["RENT_ROLL", "T12", "OFFERING_MEMO", "CALC_WORKSHEET", "OTHER"],
+    },
+    note: { type: "string" },
+  },
+  required: ["detectedType", "note"],
+  additionalProperties: false,
+} as const;
+
+export interface DocClassification {
+  detectedType: "RENT_ROLL" | "T12" | "OFFERING_MEMO" | "CALC_WORKSHEET" | "OTHER";
+  note: string;
+}
+
+// PDFs above this are skipped: base64 expansion would blow the API request cap,
+// and huge files are the slowest to round-trip for a mere shape check.
+const MAX_CLASSIFY_PDF_BYTES = 15 * 1024 * 1024;
+
+// Runs on Haiku regardless of the user's chosen model: it's a shape check, not
+// an extraction, and should cost a fraction of a cent. Pass the upload buffer
+// to avoid re-reading the file that was just written.
+export async function classifyDocument(
+  doc: DocInput,
+  data?: Buffer
+): Promise<{ classification: DocClassification; usage: AiUsage }> {
+  const isPdf = doc.mimeType === "application/pdf" || doc.filename.toLowerCase().endsWith(".pdf");
+  if (isPdf && (data?.length ?? Infinity) > MAX_CLASSIFY_PDF_BYTES) {
+    throw new Error("PDF too large for the upload sanity check.");
+  }
+  const client = getClient();
+  const content: Anthropic.ContentBlockParam[] = await docContentBlocks(doc, data);
+  content.push({
+    type: "text",
+    text: `What kind of document is this?
+- RENT_ROLL: unit-by-unit listing of rents/occupancy
+- T12: monthly operating income & expense history (trailing twelve months or similar P&L)
+- OFFERING_MEMO: marketing/deal package describing a property
+- CALC_WORKSHEET: a calculator, model, or what-if worksheet of assumptions rather than records
+- OTHER: anything else (tax bill, insurance, lease, utility statement, ...)
+Give the single best type and a one-sentence note describing what the file actually contains.`,
+  });
+  const response = await client.messages.create({
+    model: "claude-haiku-4-5",
+    max_tokens: 300,
+    system:
+      "You classify real-estate documents by their actual content. Answer with the JSON structure only.",
+    output_config: { format: { type: "json_schema", schema: CLASSIFY_SCHEMA } },
+    messages: [{ role: "user", content }],
+  });
+  const text = response.content.find((b) => b.type === "text")?.text;
+  if (!text) throw new Error("Classifier returned no output.");
+  return {
+    classification: JSON.parse(text) as DocClassification,
     usage: {
       model: response.model,
       inputTokens: response.usage.input_tokens,

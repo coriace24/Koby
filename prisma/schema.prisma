@@ -121,7 +121,9 @@ model Analysis {
   // Manual deal-calculator inputs (JSON strings) — used when no documents are analyzed yet
   unitMix            String? // [{label, count, rent, fee}] — per-unit-type monthly rents
   manualOpex         String? // {propertyTaxes, insurance, ...} — annual estimates
-  otherIncomeMonthly Float? // laundry/parking/etc, $/month (manual mode)
+  otherIncomeMonthly Float? // laundry/parking/etc, $/month (manual mode; sum of otherIncomeItems)
+  otherIncomeItems   String? // [{label, monthly}] — itemized other income (manual mode)
+  incomeBasis        String? // documents-mode income basis: null/"actual" = actual collections, "scheduled" = scheduled rent less vacancy
 
   // AI outputs (JSON strings)
   extraction String? // extracted income/expense line items with sources + data flags
@@ -145,5 +147,7 @@ model Document {
   docType   String // RENT_ROLL | T12 | OFFERING_MEMO | TAX | INSURANCE | UTILITY | LEASE | FINANCIAL | OTHER
   size      Int
   path      String
+  detectedType String? // AI sanity check: RENT_ROLL | T12 | OFFERING_MEMO | CALC_WORKSHEET | OTHER
+  detectedNote String? // one-line reason from the classifier
   createdAt DateTime @default(now())
 }

@@ -50,6 +50,10 @@ decisions.
   shown in Settings; a credit ledger and the `BILLING_ENFORCED` switch are the scaffold for
   pay-per-use billing at hosting time.
 - **Invite-only registration (optional)** — set `INVITE_CODE` to gate signups.
+- **Input transparency** — upload sanity check (AI flags files whose content doesn't
+  match their label before a full run), extraction coverage banner, switchable income
+  basis (actual collections vs scheduled − vacancy), manual-vs-documents reconciliation
+  table, and formula tooltips on every metric.
 - **Windows desktop package** — `bash desktop/build.sh` produces `dist/Koby.exe` +
   `dist/app.zip` (published to the companion **Application** repo). The exe installs the
   app into `Documents\Koby`, runs it as a local server, and opens the browser; a

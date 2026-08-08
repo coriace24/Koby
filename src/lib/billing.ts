@@ -22,7 +22,7 @@ export function estimateCostUsd(model: string, inputTokens: number, outputTokens
 export async function recordAiRun(params: {
   userId: string;
   analysisId?: string;
-  mode: "extraction" | "summary";
+  mode: "extraction" | "summary" | "classify";
   model: string;
   inputTokens: number;
   outputTokens: number;
