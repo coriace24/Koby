@@ -148,7 +148,7 @@ function installFromZip() {
       return;
     }
     fail(
-      "app.zip was not found next to Koby.exe. Keep Koby.exe and app.zip in the same folder (download both from the Application repo)."
+      "app.zip was not found next to the launcher. Put app.zip (still zipped — no need to extract it) in the same folder as Start Koby.bat / Koby.exe."
     );
   }
   let AdmZip;
@@ -170,6 +170,7 @@ function installFromZip() {
       ? `Updating app ${installedVersion} -> ${zipVersion} …`
       : `Installing Koby ${zipVersion} into ${installDir} …`
   );
+  log("Unpacking ~300 MB (a minute or two — much faster than extracting the zip by hand)…");
   fs.rmSync(appDir, { recursive: true, force: true });
   fs.mkdirSync(appDir, { recursive: true });
   zip.extractAllTo(appDir, true);
@@ -357,7 +358,10 @@ function start() {
 
 function runInstallAndServe() {
   migrateLegacyInstall();
-  if (IS_PKG) installFromZip();
+  // The launcher extracts app.zip itself (much faster than Windows Explorer for
+  // thousands of small files). Only the extracted-folder fallback needs app.zip
+  // to have been unpacked manually.
+  if (IS_PKG || fs.existsSync(path.join(selfDir, "app.zip"))) installFromZip();
   else installFromFolder();
   ensureEnv();
   applySchema();

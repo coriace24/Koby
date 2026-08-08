@@ -87,8 +87,20 @@ cp "$ROOT/desktop/start-koby.bat" "$PAYLOAD/Start Koby.bat"
 mkdir -p "$PAYLOAD/node_modules"
 cp -r "$ROOT/desktop/node_modules/adm-zip" "$PAYLOAD/node_modules/adm-zip"
 
-echo "==> 7/7 Zipping payload and compiling Koby.exe"
+echo "==> 7/7 Zipping payload, building starter, compiling Koby.exe"
 ( cd "$PAYLOAD" && zip -q -9 -r "$DIST/app.zip" . )
+
+# KobyStarter.zip: a tiny bootstrap (bat + launcher + node.exe + adm-zip).
+# The user extracts ONLY this (seconds), drops app.zip next to it still zipped,
+# and the launcher unpacks the app itself — no slow Explorer extraction.
+STARTER="$DIST/starter"
+rm -rf "$STARTER" "$DIST/KobyStarter.zip"
+mkdir -p "$STARTER/node" "$STARTER/node_modules"
+cp "$ROOT/desktop/launcher.js" "$STARTER/launcher.js"
+cp "$ROOT/desktop/start-koby.bat" "$STARTER/Start Koby.bat"
+cp "$PAYLOAD/node/node.exe" "$STARTER/node/node.exe"
+cp -r "$ROOT/desktop/node_modules/adm-zip" "$STARTER/node_modules/adm-zip"
+( cd "$STARTER" && zip -q -9 -r "$DIST/KobyStarter.zip" . )
 cd "$ROOT/desktop"
 [ -d node_modules ] || npm install --no-audit --no-fund --silent
 # --no-bytecode/--public embed plain JS source instead of compiled bytecode —
@@ -96,4 +108,4 @@ cd "$ROOT/desktop"
 npx pkg launcher.js --targets node22-win-x64 --no-bytecode --public --public-packages "*" --output "$DIST/Koby.exe"
 
 echo "==> Done:"
-ls -lh "$DIST/Koby.exe" "$DIST/app.zip"
+ls -lh "$DIST/Koby.exe" "$DIST/app.zip" "$DIST/KobyStarter.zip"
