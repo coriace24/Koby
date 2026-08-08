@@ -1780,3 +1780,33 @@ Now the reconciliation panel — shown when both sources have data:
 Fixing a typo I just introduced (`Anthml` → `Anthropic`):
 Docs updates:
 
+----- CLAUDE  (2026-08-08 21:02 UTC) -----
+All done — everything built, audited, verified, and pushed to both repos. Here's the summary:
+
+## Your four layout changes — done
+- **NNN/utility fee column removed.** Old saved rows that had a fee aren't lost: the fee merges into the rent on load, so totals stay identical.
+- **"+ Add other income type"** — other income is now itemized rows (label + $/month), e.g. Laundry / Parking / Pet fees as separate lines, with a running total.
+- **"Income" global section** now wraps unit mix & rents + other income (it does make sense — those are the two revenue components).
+- **"Expenses" global section** wraps the annual operating costs.
+
+**Excel parity re-verified after all changes** — I ran the 18th-and-Wayne reference deal through the live API: NOI $78,320 · cap 7.832% · monthly payment $5,401.66 · DSCR 1.2083 · cash-on-cash 6.4286% — all exact, plus the 22 engine tests pass.
+
+## The five recommendations — all built
+1. **Upload sanity check** — every upload gets a cheap Haiku content check; amber warnings appear when a file's content doesn't match its label (your calculator-worksheet case now warns *before* you spend an analysis run). Skips silently if no API key; costs a fraction of a cent, metered in Settings.
+2. **Extraction coverage banner** — "12 of 13 line items found · defaulted to $0: Payroll" at the top of document results.
+3. **Income basis toggle** — *Actual collections* (default) vs *Scheduled rent − vacancy* (your Excel's convention). I verified the scheduled setting reproduces the Excel income formula exactly.
+4. **Reconciliation table** — manual vs documents side by side with color-coded differences, once both exist.
+5. **Formula tooltips** — hover the ⓘ on any metric to see the formula with live numbers, including the down-payment-only cash-on-cash variant the Excel uses.
+
+## Audit (as requested)
+I ran a code review on the full diff after implementing. It found **4 real defects, all fixed before shipping**: the scheduled basis would have zeroed all income when GPR wasn't extracted (now falls back to actual); the reconciliation table colored higher documented *expenses* green (now favorability-aware); the classifier re-read the file from disk unnecessarily (now reuses the upload buffer); and oversized PDFs would have silently broken classification (now size-capped and skipped).
+
+## To see it
+**Codespaces:** stop server → `git pull` → `npx prisma@6.19.3 db push` → `npm run dev` → hard refresh (db push matters — there are new database fields). **PC:** re-download `app.zip` from the Application repo, extract, `Start Koby.bat` — it updates in place, keeping your data. Chat backup is updated too (178 messages).
+
+----- USER  (2026-08-08 21:21 UTC) -----
+the app.zip is taking too much time to unzip. 5000 items for about 1h. can you build something easily copiable
+
+----- CLAUDE  (2026-08-08 21:21 UTC) -----
+Yes — the fix is to stop making you (and Windows Explorer) extract those 5,000 files at all. Explorer is notoriously slow at many-small-files zips; the launcher itself can extract the same zip programmatically in a minute or two. I'll build a tiny **KobyStarter.zip** (~4 items, extracts in seconds): you extract only that, drop `app.zip` next to it *still zipped*, and double-click `Start Koby.bat` — the launcher unpacks the app into `Documents\Koby` itself, fast.
+
