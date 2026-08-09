@@ -54,6 +54,10 @@ decisions.
   match their label before a full run), extraction coverage banner, switchable income
   basis (actual collections vs scheduled − vacancy), manual-vs-documents reconciliation
   table, and formula tooltips on every metric.
+- **Raw-line mapping ledger** — extraction preserves the document's original line
+  labels verbatim under each category (owners label finances differently); expand any
+  category to see its source lines, confirm low-confidence mappings, move lines
+  between categories, or exclude them — totals and metrics recompute instantly.
 - **Windows desktop package** — `bash desktop/build.sh` produces `dist/Koby.exe` +
   `dist/app.zip` (published to the companion **Application** repo). The exe installs the
   app into `Documents\Koby`, runs it as a local server, and opens the browser; a

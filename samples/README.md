@@ -116,10 +116,21 @@ renovation ROI (~36%), value impact at the exit cap, and a stabilized projection
 higher NOI/cap rate/cash-on-cash. Click **Re-run AI analysis** afterwards if you want the
 written summary to reflect the new assumptions.
 
-### 6. Override a figure
+### 6. Override a figure — and inspect/fix the mapping (new)
 
 In **Extracted financials**, click any amount, type a new value, and watch the metrics
 recalculate. Overridden values are marked "User override".
+
+Categories with a **▸** arrow expand to show the document's original line items,
+labeled exactly as the owner wrote them ("Turns & Make-Ready", "PM Fee", …). Because
+every owner labels finances differently, the AI marks judgment-call mappings amber
+("N to confirm"):
+
+- Click **confirm** to accept a mapping, or use **Move to…** to send a line to the
+  right category (e.g. a "Property Mgmt Fee" the AI filed under Administrative moves
+  to Management fees) — both category totals and all metrics update instantly.
+- **Exclude from analysis** removes a line entirely (e.g. capital reserves you don't
+  count as opex); excluded lines are listed below the tables with a *restore* link.
 
 ### 7. Check the valuation & sensitivity cards
 

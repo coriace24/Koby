@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import StatusBadge from "./StatusBadge";
@@ -8,15 +8,28 @@ import PageShell from "./PageShell";
 
 // ---------- Types mirrored from the API ----------
 
+interface RawLine {
+  label: string;
+  annualAmount: number;
+  source: string;
+  confidence: "high" | "low";
+  confirmed?: boolean;
+}
 interface LineItem {
   annualAmount: number;
   source: string;
+  lines?: RawLine[];
+}
+interface ExcludedLine extends RawLine {
+  fromSection: "income" | "expenses";
+  fromKey: string;
 }
 interface Extraction {
   income: Record<string, LineItem>;
   expenses: Record<string, LineItem>;
   rentRoll: { unitCount: number; averageRentPerUnit: number; occupancyPct: number };
   dataFlags: { severity: string; message: string }[];
+  excluded?: ExcludedLine[];
 }
 interface UnitMixRow {
   label: string;
@@ -245,6 +258,8 @@ export default function AnalysisDetail({ id }: { id: string }) {
   const [incomeRows, setIncomeRows] = useState<OtherIncomeRow[]>([]);
   const [savingCalc, setSavingCalc] = useState(false);
   const [tab, setTab] = useState<"manual" | "documents">("manual");
+  const [expandedCats, setExpandedCats] = useState<Record<string, boolean>>({});
+  const [mappingBusy, setMappingBusy] = useState(false);
   const [shareLinks, setShareLinks] = useState<ShareLinkInfo[]>([]);
   const [shareOpen, setShareOpen] = useState(false);
   const [copiedLinkId, setCopiedLinkId] = useState<string | null>(null);
@@ -421,6 +436,92 @@ export default function AnalysisDetail({ id }: { id: string }) {
     setSavingAssumptions(false);
   }
 
+  // ----- Raw-line mapping actions (all persist via PATCH {extraction}) -----
+
+  async function patchExtraction(next: Extraction) {
+    setMappingBusy(true);
+    setError(null);
+    const res = await fetch(`/api/analyses/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ extraction: next }),
+    });
+    if (res.ok) setData(await res.json());
+    else {
+      const d = await res.json().catch(() => ({}));
+      setError(d.error ?? "Failed to update the mapping.");
+    }
+    setMappingBusy(false);
+  }
+
+  function retag(item: LineItem) {
+    if (!item.source.includes("adjusted by user")) item.source = `${item.source} (adjusted by user)`;
+  }
+
+  async function moveLine(section: "income" | "expenses", fromKey: string, idx: number, toKey: string) {
+    if (!data?.extractionParsed || mappingBusy) return;
+    const next = structuredClone(data.extractionParsed);
+    const from = next[section][fromKey];
+    const line = from.lines?.[idx];
+    if (!line) return;
+    from.lines!.splice(idx, 1);
+    from.annualAmount -= line.annualAmount;
+    retag(from);
+    const to = next[section][toKey];
+    if (!to) return;
+    line.confirmed = true;
+    line.confidence = "high";
+    (to.lines ??= []).push(line);
+    to.annualAmount += line.annualAmount;
+    retag(to);
+    await patchExtraction(next);
+  }
+
+  async function excludeLine(section: "income" | "expenses", fromKey: string, idx: number) {
+    if (!data?.extractionParsed || mappingBusy) return;
+    const next = structuredClone(data.extractionParsed);
+    const from = next[section][fromKey];
+    const line = from.lines?.[idx];
+    if (!line) return;
+    from.lines!.splice(idx, 1);
+    from.annualAmount -= line.annualAmount;
+    retag(from);
+    (next.excluded ??= []).push({ ...line, confirmed: true, fromSection: section, fromKey });
+    await patchExtraction(next);
+  }
+
+  async function restoreLine(excludedIdx: number) {
+    if (!data?.extractionParsed || mappingBusy) return;
+    const next = structuredClone(data.extractionParsed);
+    const line = next.excluded?.[excludedIdx];
+    if (!line) return;
+    next.excluded!.splice(excludedIdx, 1);
+    const target = next[line.fromSection]?.[line.fromKey];
+    if (!target) return;
+    if (
+      target.source.includes("User override") &&
+      !window.confirm(
+        `You manually overrode this category's total to ${money(target.annualAmount)}. Restoring adds ${money(line.annualAmount)} on top of that. Continue?`
+      )
+    ) {
+      return;
+    }
+    const { fromSection: _s, fromKey: _k, ...raw } = line;
+    (target.lines ??= []).push(raw);
+    target.annualAmount += line.annualAmount;
+    retag(target);
+    await patchExtraction(next);
+  }
+
+  async function confirmLine(section: "income" | "expenses", key: string, idx: number) {
+    if (!data?.extractionParsed || mappingBusy) return;
+    const next = structuredClone(data.extractionParsed);
+    const line = next[section][key].lines?.[idx];
+    if (!line) return;
+    line.confirmed = true;
+    await patchExtraction(next);
+  }
+
   async function overrideLineItem(section: "income" | "expenses", key: string, current: number) {
     if (!data?.extractionParsed) return;
     const raw = window.prompt(
@@ -431,7 +532,12 @@ export default function AnalysisDetail({ id }: { id: string }) {
     const n = parseFloat(raw);
     if (!Number.isFinite(n)) return;
     const extraction = structuredClone(data.extractionParsed);
-    extraction[section][key] = { annualAmount: n, source: "User override" };
+    // Keep the raw-line ledger — an override changes the total, not the mapping.
+    extraction[section][key] = {
+      annualAmount: n,
+      source: "User override",
+      lines: extraction[section][key].lines ?? [],
+    };
     const res = await fetch(`/api/analyses/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -1235,6 +1341,19 @@ export default function AnalysisDetail({ id }: { id: string }) {
               : "actual collected rent"}
             ; the manual column always uses your unit-mix rent − vacancy assumption. Income basis is
             switchable on the Uploaded documents tab.
+            {ex &&
+              (ex.excluded?.length ||
+                Object.values({ ...ex.income, ...ex.expenses }).some(
+                  (it) =>
+                    it.source.includes("User override") ||
+                    it.source.includes("adjusted by user") ||
+                    it.lines?.some((l) => l.confirmed)
+                )) && (
+                <span className="block mt-1 text-blue-800">
+                  ✎ The documents column reflects your overrides and re-mappings — these are the final
+                  numbers used, not the raw extraction.
+                </span>
+              )}
           </p>
         </section>
       )}
@@ -1484,8 +1603,11 @@ export default function AnalysisDetail({ id }: { id: string }) {
         <section className={card}>
           <h2 className="font-semibold mb-1">Extracted financials</h2>
           <p className="text-xs text-slate-500 mb-4">
-            Every figure shows its source document. Click a value to override it — you are responsible for
-            verifying all extracted data.
+            Every figure shows its source document; click a value to override a total. Categories with ▸
+            expand to show the document&apos;s own line items, exactly as the owner labeled them — move a
+            line to a different category (or exclude it) if the AI mapped it wrong, and confirm the amber
+            ones it was unsure about. Owners label finances differently; this is where you make the
+            mapping yours.
           </p>
           <div className="grid md:grid-cols-2 gap-6">
             {(
@@ -1501,19 +1623,91 @@ export default function AnalysisDetail({ id }: { id: string }) {
                     {Object.entries(labels).map(([key, lbl]) => {
                       const item = ex[section][key];
                       if (!item) return null;
+                      const catId = `${section}.${key}`;
+                      const lines = item.lines ?? [];
+                      const unconfirmedLow = lines.filter((l) => l.confidence === "low" && !l.confirmed).length;
+                      const open = expandedCats[catId];
                       return (
-                        <tr key={key} className="border-t border-slate-100">
-                          <td className="py-1.5 pr-2">{lbl}</td>
-                          <td className="py-1.5 text-right">
-                            <button
-                              onClick={() => overrideLineItem(section, key, item.annualAmount)}
-                              className="font-medium hover:text-blue-700 hover:underline"
-                              title={`Source: ${item.source}\nClick to override`}
-                            >
-                              {money(item.annualAmount)}
-                            </button>
-                          </td>
-                        </tr>
+                        <Fragment key={key}>
+                          <tr className="border-t border-slate-100">
+                            <td className="py-1.5 pr-2">
+                              {lines.length > 0 ? (
+                                <button
+                                  onClick={() => setExpandedCats({ ...expandedCats, [catId]: !open })}
+                                  className="hover:text-blue-700"
+                                  title="Show the document lines mapped into this category"
+                                >
+                                  <span className="inline-block w-4 text-slate-400">{open ? "▾" : "▸"}</span>
+                                  {lbl}
+                                  <span className="ml-1.5 text-xs text-slate-400">({lines.length})</span>
+                                  {unconfirmedLow > 0 && (
+                                    <span
+                                      className="ml-1.5 text-xs rounded-full bg-amber-100 text-amber-800 px-1.5"
+                                      title="Mappings the AI was unsure about — expand to confirm or move them"
+                                    >
+                                      {unconfirmedLow} to confirm
+                                    </span>
+                                  )}
+                                </button>
+                              ) : (
+                                <span className="pl-4">{lbl}</span>
+                              )}
+                            </td>
+                            <td className="py-1.5 text-right">
+                              <button
+                                onClick={() => overrideLineItem(section, key, item.annualAmount)}
+                                className="font-medium hover:text-blue-700 hover:underline"
+                                title={`Source: ${item.source}\nClick to override the total`}
+                              >
+                                {money(item.annualAmount)}
+                              </button>
+                            </td>
+                          </tr>
+                          {open &&
+                            lines.map((line, idx) => (
+                              <tr key={`${key}-${idx}`} className="bg-slate-50/60">
+                                <td className="py-1 pl-6 pr-2 text-xs" colSpan={1}>
+                                  <span className="text-slate-700">“{line.label}”</span>
+                                  <span className="ml-1 text-slate-400" title={line.source}>
+                                    · {money(line.annualAmount)}
+                                  </span>
+                                  {line.confidence === "low" && !line.confirmed && (
+                                    <button
+                                      onClick={() => confirmLine(section, key, idx)}
+                                      disabled={mappingBusy}
+                                      className="ml-2 text-xs rounded bg-amber-100 text-amber-800 px-1.5 hover:bg-amber-200 disabled:opacity-50"
+                                      title="The AI wasn't sure this belongs here — click to confirm the mapping"
+                                    >
+                                      confirm
+                                    </button>
+                                  )}
+                                  {line.confirmed && <span className="ml-2 text-xs text-green-700">✓ verified</span>}
+                                </td>
+                                <td className="py-1 pr-1 text-right">
+                                  <select
+                                    className="text-xs rounded border border-slate-200 bg-white px-1 py-0.5 max-w-36 disabled:opacity-50"
+                                    value=""
+                                    disabled={mappingBusy}
+                                    onChange={(e) => {
+                                      const v = e.target.value;
+                                      if (v === "__exclude__") excludeLine(section, key, idx);
+                                      else if (v) moveLine(section, key, idx, v);
+                                    }}
+                                  >
+                                    <option value="">Move to…</option>
+                                    {Object.entries(labels)
+                                      .filter(([k]) => k !== key)
+                                      .map(([k, l]) => (
+                                        <option key={k} value={k}>
+                                          {l}
+                                        </option>
+                                      ))}
+                                    <option value="__exclude__">Exclude from analysis</option>
+                                  </select>
+                                </td>
+                              </tr>
+                            ))}
+                        </Fragment>
                       );
                     })}
                   </tbody>
@@ -1521,6 +1715,26 @@ export default function AnalysisDetail({ id }: { id: string }) {
               </div>
             ))}
           </div>
+          {ex.excluded && ex.excluded.length > 0 && (
+            <div className="mt-4">
+              <h3 className="text-sm font-medium text-slate-500 mb-1">Excluded from analysis</h3>
+              <ul className="text-xs text-slate-500 space-y-1">
+                {ex.excluded.map((line, i) => (
+                  <li key={i}>
+                    “{line.label}” · {money(line.annualAmount)} (was{" "}
+                    {(line.fromSection === "income" ? INCOME_LABELS : EXPENSE_LABELS)[line.fromKey] ?? line.fromKey})
+                    <button
+                      onClick={() => restoreLine(i)}
+                      disabled={mappingBusy}
+                      className="ml-2 text-blue-700 hover:underline disabled:opacity-50"
+                    >
+                      restore
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           <div className="mt-4 text-sm text-slate-600">
             Rent roll: {ex.rentRoll.unitCount} units · avg {money(ex.rentRoll.averageRentPerUnit)}/unit/mo ·{" "}
             {pct(ex.rentRoll.occupancyPct, 1)} occupied

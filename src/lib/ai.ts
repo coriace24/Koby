@@ -23,9 +23,23 @@ function getClient(): Anthropic {
 
 // ---------- Types shared with the UI ----------
 
+export interface RawLine {
+  label: string; // the document's original wording, verbatim
+  annualAmount: number;
+  source: string;
+  confidence: "high" | "low"; // low = the mapping was a judgment call
+  confirmed?: boolean; // set by the user in the mapping UI
+}
+
 export interface ExtractedLineItem {
   annualAmount: number;
   source: string; // where the number came from, e.g. "T-12 statement, 'Insurance' row"
+  lines?: RawLine[]; // Layer 1: original document lines summed into this category
+}
+
+export interface ExcludedLine extends RawLine {
+  fromSection: "income" | "expenses";
+  fromKey: string; // category it was extracted into before the user excluded it
 }
 
 export interface Extraction {
@@ -52,6 +66,7 @@ export interface Extraction {
     occupancyPct: number;
   };
   dataFlags: { severity: "info" | "warning" | "critical"; message: string }[];
+  excluded?: ExcludedLine[]; // lines the user removed from the analysis entirely
 }
 
 export interface AiSummary {
@@ -111,13 +126,28 @@ async function docContentBlocks(
 
 // ---------- Extraction ----------
 
+// Layer 1: the original document lines, labels preserved verbatim, that were
+// summed into a category — so users can see and correct the mapping.
+const rawLineSchema = {
+  type: "object",
+  properties: {
+    label: { type: "string" },
+    annualAmount: { type: "number" },
+    source: { type: "string" },
+    confidence: { type: "string", enum: ["high", "low"] },
+  },
+  required: ["label", "annualAmount", "source", "confidence"],
+  additionalProperties: false,
+} as const;
+
 const lineItemSchema = {
   type: "object",
   properties: {
     annualAmount: { type: "number" },
     source: { type: "string" },
+    lines: { type: "array", items: rawLineSchema },
   },
-  required: ["annualAmount", "source"],
+  required: ["annualAmount", "source", "lines"],
   additionalProperties: false,
 } as const;
 
@@ -195,7 +225,28 @@ Rules:
 - Every extracted number must cite its source: the document name and the specific row/section it came from. If a value could not be found, set annualAmount to 0 and source to "NOT FOUND" and add a dataFlag (e.g. "Property taxes were not included in the provided documents.").
 - Flag questionable values in dataFlags (e.g. insurance far below typical market levels, vacancy inconsistent between rent roll and T-12, totals that don't reconcile).
 - rentRoll.averageRentPerUnit is the average in-place monthly rent per occupied unit from the rent roll.
-- Do not invent numbers. Prefer the most recent trailing-12 data when multiple periods exist.`;
+- Do not invent numbers. Prefer the most recent trailing-12 data when multiple periods exist.
+
+Raw line ledger — every property owner labels their financials differently, so preserve the document's own wording:
+- For each category, "lines" lists the ORIGINAL document line items you summed into it: label EXACTLY as written in the document (never re-word it), that line's annual amount, its source, and a confidence.
+- confidence "low" whenever the mapping is a judgment call (ambiguous label, could belong to another category, unusual grouping). "high" only for unmistakable mappings.
+- A category's annualAmount must equal the sum of its lines when lines exist. A category with no matching document lines has lines: [] and annualAmount 0.
+- Never merge two document lines into one entry; one document row = one line.
+
+Category mapping guide (synonyms owners commonly use):
+- grossPotentialRent: gross scheduled rent, market rent, gross potential income, scheduled rent at 100%.
+- actualCollectedRent: rent collected, net rental income, rental receipts, effective rental income.
+- vacancyLoss: vacancy, vacancy & credit loss, concessions, bad debt, loss to lease.
+- otherIncome: laundry, parking, pet fees/rent, storage, application fees, late fees, RUBS/utility reimbursement.
+- propertyTaxes: real estate taxes, RE taxes, property tax.
+- insurance: property/hazard/liability insurance.
+- utilities: water, sewer, gas, electric, trash/refuse.
+- repairsMaintenance: repairs, maintenance, turns, make-ready, cleaning, contract services, supplies, pest control.
+- managementFees: property management, PM fee, asset management fee.
+- payroll: salaries, wages, on-site staff/manager, payroll taxes, employee benefits.
+- landscaping: grounds, lawn care, snow removal, CAM/common area maintenance.
+- administrative: office, legal, accounting, professional fees, marketing, advertising, permits/licenses.
+- other: reserves, capital expenditure holdback, and anything that fits no category above (keep its original label so the user can re-map it).`;
 
 export interface AiUsage {
   model: string;
@@ -218,7 +269,7 @@ export async function extractFromDocuments(
 
   const response = await client.messages.create({
     model: resolveModel(model),
-    max_tokens: 16000,
+    max_tokens: 24000,
     thinking: { type: "adaptive" },
     system: EXTRACTION_SYSTEM,
     output_config: { format: { type: "json_schema", schema: EXTRACTION_SCHEMA } },
