@@ -102,6 +102,10 @@ function spreadsheetToText(data: Buffer): string {
   return text;
 }
 
+function isPdfDoc(doc: DocInput): boolean {
+  return doc.mimeType === "application/pdf" || doc.filename.toLowerCase().endsWith(".pdf");
+}
+
 async function docContentBlocks(
   doc: DocInput,
   preloaded?: Buffer
@@ -111,7 +115,7 @@ async function docContentBlocks(
     text: `Document: "${doc.filename}" (declared type: ${doc.docType})`,
   };
   const data = preloaded ?? (await readUpload(doc.path));
-  if (doc.mimeType === "application/pdf" || doc.filename.toLowerCase().endsWith(".pdf")) {
+  if (isPdfDoc(doc)) {
     return [
       header,
       {
@@ -363,12 +367,12 @@ export async function classifyDocument(
   doc: DocInput,
   data?: Buffer
 ): Promise<{ classification: DocClassification; usage: AiUsage }> {
-  const isPdf = doc.mimeType === "application/pdf" || doc.filename.toLowerCase().endsWith(".pdf");
-  if (isPdf && (data?.length ?? Infinity) > MAX_CLASSIFY_PDF_BYTES) {
+  const buffer = data ?? (await readUpload(doc.path));
+  if (isPdfDoc(doc) && buffer.length > MAX_CLASSIFY_PDF_BYTES) {
     throw new Error("PDF too large for the upload sanity check.");
   }
   const client = getClient();
-  const content: Anthropic.ContentBlockParam[] = await docContentBlocks(doc, data);
+  const content: Anthropic.ContentBlockParam[] = await docContentBlocks(doc, buffer);
   content.push({
     type: "text",
     text: `What kind of document is this?
@@ -449,6 +453,9 @@ export async function generateSummary(
 
   if (response.stop_reason === "refusal") {
     throw new Error("The AI declined to summarize this analysis.");
+  }
+  if (response.stop_reason === "max_tokens") {
+    throw new Error("AI summary output was truncated. Try re-running the analysis.");
   }
 
   const text = response.content.find((b) => b.type === "text")?.text;
