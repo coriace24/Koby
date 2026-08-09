@@ -126,29 +126,41 @@ async function docContentBlocks(
 
 // ---------- Extraction ----------
 
-// Layer 1: the original document lines, labels preserved verbatim, that were
-// summed into a category — so users can see and correct the mapping.
-const rawLineSchema = {
-  type: "object",
-  properties: {
-    label: { type: "string" },
-    annualAmount: { type: "number" },
-    source: { type: "string" },
-    confidence: { type: "string", enum: ["high", "low"] },
-  },
-  required: ["label", "annualAmount", "source", "confidence"],
-  additionalProperties: false,
-} as const;
-
 const lineItemSchema = {
   type: "object",
   properties: {
     annualAmount: { type: "number" },
     source: { type: "string" },
-    lines: { type: "array", items: rawLineSchema },
   },
-  required: ["annualAmount", "source", "lines"],
+  required: ["annualAmount", "source"],
   additionalProperties: false,
+} as const;
+
+const CATEGORY_IDS = [
+  "income.grossPotentialRent", "income.actualCollectedRent", "income.vacancyLoss", "income.otherIncome",
+  "expenses.propertyTaxes", "expenses.insurance", "expenses.utilities", "expenses.repairsMaintenance",
+  "expenses.managementFees", "expenses.payroll", "expenses.landscaping", "expenses.administrative",
+  "expenses.other",
+] as const;
+
+// Layer 1: the original document lines, labels preserved verbatim. A single flat
+// array (instead of nesting this schema in all 13 categories) keeps the compiled
+// structured-output grammar small; extractFromDocuments folds the entries back
+// under their categories.
+const rawLinesSchema = {
+  type: "array",
+  items: {
+    type: "object",
+    properties: {
+      category: { type: "string", enum: [...CATEGORY_IDS] },
+      label: { type: "string" },
+      annualAmount: { type: "number" },
+      source: { type: "string" },
+      confidence: { type: "string", enum: ["high", "low"] },
+    },
+    required: ["category", "label", "annualAmount", "source", "confidence"],
+    additionalProperties: false,
+  },
 } as const;
 
 const EXTRACTION_SCHEMA = {
@@ -213,8 +225,9 @@ const EXTRACTION_SCHEMA = {
         additionalProperties: false,
       },
     },
+    rawLines: rawLinesSchema,
   },
-  required: ["income", "expenses", "rentRoll", "dataFlags"],
+  required: ["income", "expenses", "rentRoll", "dataFlags", "rawLines"],
   additionalProperties: false,
 };
 
@@ -228,10 +241,10 @@ Rules:
 - Do not invent numbers. Prefer the most recent trailing-12 data when multiple periods exist.
 
 Raw line ledger — every property owner labels their financials differently, so preserve the document's own wording:
-- For each category, "lines" lists the ORIGINAL document line items you summed into it: label EXACTLY as written in the document (never re-word it), that line's annual amount, its source, and a confidence.
+- "rawLines" lists EVERY original document line item you used, with the category you assigned it to: label EXACTLY as written in the document (never re-word it), that line's annual amount, its source, and a confidence.
 - confidence "low" whenever the mapping is a judgment call (ambiguous label, could belong to another category, unusual grouping). "high" only for unmistakable mappings.
-- A category's annualAmount must equal the sum of its lines when lines exist. A category with no matching document lines has lines: [] and annualAmount 0.
-- Never merge two document lines into one entry; one document row = one line.
+- A category's annualAmount must equal the sum of its rawLines entries for that category. A category with no matching document lines has annualAmount 0 and no rawLines entries.
+- Never merge two document lines into one entry; one document row = one rawLines entry.
 
 Category mapping guide (synonyms owners commonly use):
 - grossPotentialRent: gross scheduled rent, market rent, gross potential income, scheduled rent at 100%.
@@ -289,8 +302,28 @@ export async function extractFromDocuments(
 
   const text = response.content.find((b) => b.type === "text")?.text;
   if (!text) throw new Error("AI extraction returned no output.");
+  const parsed = JSON.parse(text) as Extraction & {
+    rawLines?: { category: string; label: string; annualAmount: number; source: string; confidence: "high" | "low" }[];
+  };
+  // Fold the flat rawLines array back under each category (the UI's shape).
+  const { rawLines, ...extraction } = parsed;
+  for (const rl of rawLines ?? []) {
+    const [sec, key] = rl.category.split(".");
+    const bucket =
+      sec === "income" || sec === "expenses"
+        ? (extraction[sec] as Record<string, ExtractedLineItem>)[key]
+        : undefined;
+    if (bucket) {
+      (bucket.lines ??= []).push({
+        label: rl.label,
+        annualAmount: rl.annualAmount,
+        source: rl.source,
+        confidence: rl.confidence,
+      });
+    }
+  }
   return {
-    extraction: JSON.parse(text) as Extraction,
+    extraction,
     usage: {
       model: response.model,
       inputTokens: response.usage.input_tokens,
