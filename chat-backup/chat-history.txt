@@ -1912,3 +1912,26 @@ Four real findings again — fixing all:
 ----- CLAUDE  (2026-08-09 12:59 UTC) -----
 Docs, then ship everything:
 
+----- CLAUDE  (2026-08-09 13:02 UTC) -----
+Done — the executable parts of the proposal are built, audited, and pushed to both repos. Here's what your client's feedback turned into:
+
+**Layer 1 — raw line ledger (new).** The AI extraction now returns, inside every category, the document's original line items *verbatim* — "Turns & Make-Ready", "PM Fee", whatever the owner wrote — each with its amount, source row, and a confidence rating. The AI is explicitly forbidden from re-wording labels, and one document row stays one line (never merged). A synonym guide (a mini chart of accounts: payroll = salaries/wages/on-site staff, etc.) steers the mapping to be consistent in the first place.
+
+**Layer 2 — the mapping made visible.** In Extracted financials, categories now have a ▸ arrow: expand "Administrative $12,000" and see exactly which document lines were summed into it. Judgment-call mappings carry an amber "**N to confirm**" badge on the category row so you can spot them without hunting.
+
+**Layer 3 — human verification.** Every raw line has three actions: **confirm** (accepts an amber mapping, marks it ✓ verified), **Move to…** (sends it to the right category — both totals and every metric recompute instantly), and **Exclude from analysis** (with a restore list below the tables). I smoke-tested your client's literal example through the live API: a "Property Mgmt Fee" the AI filed under Administrative moved to Management fees — Administrative dropped to $3,000, Management fees became $9,000, total opex unchanged.
+
+**Final-numbers marker.** The reconciliation table now flags when the documents column reflects your overrides/re-mappings rather than the raw extraction — the "raw vs final used" distinction the feedback asked for.
+
+**Skipped as analyzed:** separate OCR pipeline, standalone taxonomy database, reconciliation rewrite — all redundant at this scale.
+
+**Audit:** the code review caught 4 real bugs before shipping (overriding a total would have wiped the line ledger; rapid clicks could silently lose an action; restoring into an overridden total corrupted it silently — now asks first; a stale error banner). All fixed, 22 tests green, build clean.
+
+**Note for testing:** existing analyses show no line detail until you **re-run the AI analysis** — raw lines only exist for extractions made from now on. Update: Codespaces `git pull` + restart; PC: new `app.zip` into the starter folder. Chat backup current (195 messages).
+
+----- USER  (2026-08-09 15:34 UTC) -----
+Have you updated the readme for a new install?
+
+----- CLAUDE  (2026-08-09 15:34 UTC) -----
+Let me check the current state of both READMEs against what a fresh install actually needs today:
+
