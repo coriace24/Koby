@@ -1998,3 +1998,23 @@ Understood — that's now a standing rule: **every fix gets a code-review audit 
 ----- CLAUDE  (2026-08-09 20:46 UTC) -----
 Four findings — fixing the three defects now (the fourth is a model-upgrade suggestion I'll surface to you rather than decide unilaterally):
 
+----- CLAUDE  (2026-08-09 20:50 UTC) -----
+The rule is adopted, enforced retroactively, and made permanent. Here's what just happened:
+
+**The rule, codified.** I created `CLAUDE.md` in the repo root — the file that governs how I (or any future session, even after this chat's context is long gone) work on this project. It states as a MUST: *every* code change gets a code-review audit before commit, findings fixed first, plus the 22 tests, a clean build, and Excel-parity re-verification whenever the math is touched. It also locks in the standing sync duties (Application repo rebuild, test kit, chat backup) and the hard-won constraints so they can't be relearned the painful way.
+
+**The rule, applied retroactively — and it proved your point.** The two hotfixes I shipped yesterday went out un-audited, so I audited them now. The audit found **3 real defects those fixes had left behind**:
+1. A truncated AI summary would have shown you a cryptic `Unexpected end of JSON input` error instead of a clear "output was truncated, re-run" message.
+2. The upload sanity check had an inverted guard that would have rejected *every* PDF as "too large" on one code path.
+3. The PDF-detection logic existed in two copies that could drift apart, letting an oversized file slip past the size guard.
+
+All three fixed, tests and build green, both repos updated, chat backup current (211 messages).
+
+**One finding is yours to decide:** the audit also noted the app's default AI model is `claude-opus-4-8`, while `claude-opus-5` is a drop-in upgrade at **identical pricing** and is stronger at exactly this document-analysis work. It's a one-line change plus adding it to the Settings dropdown. I didn't change it unilaterally since you chose the current model lineup — say the word and I'll switch the default (audited, of course).
+
+For your PC: this batch is in the Application repo — same routine, new `app.zip` into the starter folder whenever you next update.
+
+----- USER  (2026-08-09 20:58 UTC) -----
+[screenshot attached]
+what does the red and green color interpretation are? and the minus and plus sign ? At the end of analysis
+
