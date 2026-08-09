@@ -2051,3 +2051,18 @@ That's the intended end-of-analysis use: **green rows are pleasant surprises to 
 ----- USER  (2026-08-09 21:07 UTC) -----
 switch the default claude-opus-5
 
+----- CLAUDE  (2026-08-09 21:13 UTC) -----
+Done — the default model is now **Claude Opus 5**, at the same price as before ($5/$25 per million tokens). Full audit cycle ran per the new rule, and it caught one thing worth fixing.
+
+**What changed:**
+- Every AI run (extraction, summary) now uses `claude-opus-5` by default — a stronger model for exactly this document-analysis work, at identical cost. Your metering in Settings prices it correctly.
+- The Settings dropdown now offers: Server default (Opus 5) · **Claude Opus 5** · Claude Opus 4.8 (previous generation) · Sonnet 5 · Haiku 4.5. Anyone who had explicitly selected Opus 4.8 keeps working unchanged — it stays selectable and priced.
+- `.env.example` and the README reflect the new default.
+
+**The audit did its job:** it verified the swap is genuinely drop-in (the code already handles streaming, adaptive thinking, and refusal/truncation stop reasons — all things Opus 5 expects), confirmed the pricing entry, and found one real defect: the model list was maintained by hand in *two* files, and the copies had already drifted. It now lives in a single shared module that both the Settings page and the API validator import — the next model change is a one-file edit. Tests and build re-verified after the fix.
+
+**To pick it up:** Codespaces — `git pull` + restart (no db change this time). PC — new `app.zip` into the starter folder as usual. Your next "Run AI analysis" will silently be an Opus 5 run; if you have `ANTHROPIC_MODEL` set in a Codespaces secret or `.env` from before, that override wins, so clear it if you want the new default there too.
+
+----- USER  (2026-08-09 21:17 UTC) -----
+I ca still change the model right?
+
