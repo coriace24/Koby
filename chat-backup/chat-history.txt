@@ -1858,3 +1858,57 @@ Everything re-verified before shipping: 22 engine tests pass, production build c
 [screenshot attached]
 check this prompt for Claude generated from the feedback at the top and see if it solves anything that we have already seen or tried to solve. And if yes/no, what can you take away from it to better the app as it is right now. Layout anything before I try to execute any of your propositions
 
+----- CLAUDE  (2026-08-09 12:31 UTC) -----
+I read the client feedback and the generated prompt carefully. Honest verdict: **it partially overlaps with what we just built, but its core idea targets the *cause* of the mismatch problem, where our recent work targeted the *symptom* — and that core idea is genuinely worth adopting.** Here's the breakdown, then my proposal. Nothing executed.
+
+## What it proposes that we already have
+
+- **"Reconciliation Tab" comparing manual vs AI numbers** → we shipped exactly this (manual-vs-documents table with deltas), plus the coverage banner and income-basis toggle. The "why is my NOI off?" question is already answerable at the *metric* level.
+- **User verification** → we have per-figure source citations, click-to-override, data flags, and the "User verification required" status.
+- **"AI never changes the label / cite the source"** → our extraction already forbids inventing numbers and cites document + row for every figure.
+
+So roughly half the prompt is re-specifying things that exist. If you pasted it into a fresh Claude session as-is, you'd get a redundant rebuild.
+
+## What it proposes that we do NOT have — and the client is right about it
+
+The client's key sentence: *"payroll, administrative and management fee — they're the same thing but each owner puts it differently, and the AI sees it as 3 different things."*
+
+Our current extraction **maps document lines into our 13 fixed categories in one opaque step and throws away the original line labels.** You see "Repairs & maintenance: $8,000 (source: T-12 row 14)" but not that the document actually said "Turns & Make-Ready" — and if an owner's "Contract Services" got lumped into *Other* or split oddly, there's no way to see or fix the mapping, only to override the total. That's the real gap, and it's the actual root cause of "AI results ≠ my calculation" for real-world documents. The 3-layer framing (raw lines → taxonomy → confirmed mapping) is the correct architecture for it.
+
+## My proposal — what to take from it (and what to skip)
+
+**1. Preserve the raw line ledger (their Layer 1).** Extend the extraction so the AI returns, *inside each category*, the original document lines it summed: original label verbatim, amount, source, and a confidence level. Same single AI call, richer output. Our categories and the calculation engine don't change at all.
+
+**2. Show the mapping (Layer 2 made visible).** In "Extracted financials," each category becomes expandable: click "Repairs & maintenance $8,000" and see "Turns & make-ready $5,200 + Contract services $2,800 — from T-12 rows 14, 17." Also add category synonym guidance to the extraction prompt (a mini chart-of-accounts: "payroll = salaries, wages, on-site staff…") so mapping gets more consistent in the first place.
+
+**3. Re-mapping UI (their Layer 3 — the human-in-the-loop).** Any raw line can be moved to a different category from a dropdown (or excluded), and low-confidence mappings get an amber "confirm this" marker. Totals and all metrics recompute instantly; confirmed mappings are stamped "user-verified." This is the piece that makes the client's payroll/admin/management-fee example fixable in two clicks instead of a manual override guess.
+
+**4. Add a "final numbers used" awareness to reconciliation.** Our reconciliation table gets a third notion the client asked for: where a category was overridden or re-mapped, mark it so users see *raw extracted* vs *final used* differ deliberately.
+
+**Skip from their prompt:** a separate ingestion pipeline/OCR layer (our extraction already handles PDF/Excel natively), a formal standalone taxonomy database (13 categories + synonyms in the prompt is the right scale for now — a per-user custom dictionary is a hosting-era feature), and rebuilding the reconciliation tab from scratch (ours needs the drill-down, not a rewrite).
+
+**Effort:** one coherent batch — extraction schema/prompt (medium), expandable mapping + re-map UI (medium), reconciliation touch-up (small). Existing analyses keep working; new raw-line detail appears on their next AI run. As usual: tests, audit pass, both repos, test-kit update.
+
+Say "execute" (or trim the list) and I'll build it.
+
+----- USER  (2026-08-09 12:51 UTC) -----
+execute what is executable from your proposal and skip what is supposed to from your analysis
+
+----- CLAUDE  (2026-08-09 12:51 UTC) -----
+Executing items 1–4 (raw line ledger, visible mapping + synonyms, re-mapping UI, final-used marker) and skipping the OCR pipeline, standalone taxonomy database, and reconciliation rewrite. Starting with the extraction layer:
+
+----- CLAUDE  (2026-08-09 12:53 UTC) -----
+Now the expandable table rendering in Extracted financials:
+
+----- CLAUDE  (2026-08-09 12:54 UTC) -----
+Now the final-used marker on the reconciliation table and updated section copy:
+
+----- CLAUDE  (2026-08-09 12:55 UTC) -----
+Now a smoke test — verify raw lines and exclusions persist through the API and totals recompute:
+
+----- CLAUDE  (2026-08-09 12:58 UTC) -----
+Four real findings again — fixing all:
+
+----- CLAUDE  (2026-08-09 12:59 UTC) -----
+Docs, then ship everything:
+
