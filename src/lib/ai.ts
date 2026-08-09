@@ -267,14 +267,18 @@ export async function extractFromDocuments(
     text: "Extract the income, expense, and rent roll data from the documents above into the required JSON structure. Remember: annual amounts, sources for every number, and data quality flags.",
   });
 
-  const response = await client.messages.create({
-    model: resolveModel(model),
-    max_tokens: 24000,
-    thinking: { type: "adaptive" },
-    system: EXTRACTION_SYSTEM,
-    output_config: { format: { type: "json_schema", schema: EXTRACTION_SCHEMA } },
-    messages: [{ role: "user", content }],
-  });
+  // Streamed: the SDK requires streaming for requests whose max_tokens implies a
+  // potentially >10-minute response; finalMessage() gives the same Message object.
+  const response = await client.messages
+    .stream({
+      model: resolveModel(model),
+      max_tokens: 24000,
+      thinking: { type: "adaptive" },
+      system: EXTRACTION_SYSTEM,
+      output_config: { format: { type: "json_schema", schema: EXTRACTION_SCHEMA } },
+      messages: [{ role: "user", content }],
+    })
+    .finalMessage();
 
   if (response.stop_reason === "refusal") {
     throw new Error("The AI declined to process these documents.");
@@ -394,19 +398,21 @@ export async function generateSummary(
 ): Promise<{ summary: AiSummary; usage: AiUsage }> {
   const client = getClient();
 
-  const response = await client.messages.create({
-    model: resolveModel(model),
-    max_tokens: 8000,
-    thinking: { type: "adaptive" },
-    system: SUMMARY_SYSTEM,
-    output_config: { format: { type: "json_schema", schema: SUMMARY_SCHEMA } },
-    messages: [
-      {
-        role: "user",
-        content: `Here is the underwriting data for a multifamily property analysis. Produce the property analysis summary.\n\n${context}`,
-      },
-    ],
-  });
+  const response = await client.messages
+    .stream({
+      model: resolveModel(model),
+      max_tokens: 8000,
+      thinking: { type: "adaptive" },
+      system: SUMMARY_SYSTEM,
+      output_config: { format: { type: "json_schema", schema: SUMMARY_SCHEMA } },
+      messages: [
+        {
+          role: "user",
+          content: `Here is the underwriting data for a multifamily property analysis. Produce the property analysis summary.\n\n${context}`,
+        },
+      ],
+    })
+    .finalMessage();
 
   if (response.stop_reason === "refusal") {
     throw new Error("The AI declined to summarize this analysis.");
