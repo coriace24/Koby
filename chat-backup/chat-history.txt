@@ -2018,3 +2018,36 @@ For your PC: this batch is in the Application repo — same routine, new `app.zi
 [screenshot attached]
 what does the red and green color interpretation are? and the minus and plus sign ? At the end of analysis
 
+----- CLAUDE  (2026-08-09 20:59 UTC) -----
+Good question — the sign and the color answer two *different* questions on purpose.
+
+## The − / + sign: which direction is the gap?
+
+The Difference column is always **Documents minus Manual entry**:
+
+- **− (minus)** = the documents show *less* than what you typed into the calculator
+- **+ (plus)** = the documents show *more* than you assumed
+
+It's pure arithmetic, no judgment. In your screenshot, effective gross income is −$254,155: the property's actual documents show about a quarter-million dollars *less* income per year than your manual assumptions.
+
+## The red / green color: is that gap good or bad *for you as the buyer*?
+
+Color is favorability, and that's why it doesn't simply follow the sign:
+
+- For income, NOI, cap rate, DSCR, cash flow, cash-on-cash → **higher is better**, so a minus is red (reality underperforms your assumptions) and a plus would be green.
+- For **operating expenses, the logic flips** → lower is better. That's your green row: documents show **−$145,664** of expenses — the property actually costs far *less* to run than you assumed, which is *good news*, hence green despite the minus sign.
+
+So: **sign = direction of the gap, color = whether that direction helps or hurts the deal.**
+
+## Reading your screenshot "at the end of analysis"
+
+The table is telling a clear story: your manual assumptions describe a far richer property than the documents do — $428K assumed income vs $174K documented, giving an implausible 20.7% cap rate and 57.8% cash-on-cash on the manual side, versus a believable 9.9% / 16.1% from the documents. Two honest possibilities:
+
+1. **The manual inputs belong to a different test/deal** (likely here — the numbers look like leftover unit-mix entries from another scenario), in which case the table is just correctly showing the two tabs aren't describing the same property; or
+2. If these *were* meant to be the same deal, every red row is literally your due-diligence checklist: "why does the rent roll support $35K/month but the T-12 only shows $14.5K collected?" is the exact question you'd take to the broker.
+
+That's the intended end-of-analysis use: **green rows are pleasant surprises to confirm, red rows are the claims to challenge before writing an offer.** The documents column is the defensible one (it cites its sources); the manual column is only as good as what was typed in.
+
+----- USER  (2026-08-09 21:07 UTC) -----
+switch the default claude-opus-5
+
