@@ -1952,3 +1952,27 @@ Everything is pushed, and the chat backup is up to date (198 messages).
 ----- CLAUDE  (2026-08-09 20:10 UTC) -----
 That error is mine to fix — when I raised the extraction output budget to 24,000 tokens for the raw-line ledger, the request crossed the Anthropic SDK's 10-minute threshold, and it now refuses to run without streaming. The fix is to switch the two long AI calls to streaming mode (same result, delivered incrementally):
 
+----- CLAUDE  (2026-08-09 20:14 UTC) -----
+Fixed and shipped. That failure was a side effect of yesterday's raw-line ledger work: I raised the AI's output allowance (16k → 24k tokens) so it could return every document line, and that pushed the request over the Anthropic SDK's threshold where it *refuses* to run without streaming — hence "Streaming is required for operations that may take longer than 10 minutes" and the failed analysis.
+
+The extraction and summary calls now stream their responses (same result, delivered incrementally, no timeout ceiling). Nothing else changed — your documents, inputs, and the analysis itself are untouched.
+
+**To get the fix on your PC:** download the new **`app.zip`** from the Application repo, replace the one in your starter folder (still zipped), and double-click `Start Koby.bat` — it updates in place. Then hit **Re-run AI analysis** on Wayne St Apartments; it should complete this time, and you'll also see the new expandable raw-line mapping under Extracted financials once it does.
+
+One aside from your screenshot: this was a good real-world test — you're running the sample documents against a property with different assumptions ($900,000, 15 units, built 1971), which is exactly the kind of setup where the reconciliation table and coverage banner earn their keep once the run completes. If anything else fails after the update, the console window (or `koby-launcher.log`) will have the story — send it over.
+
+----- USER  (2026-08-09 20:14 UTC) -----
+That error is mine to fix — when I raised the extraction output budget to 24,000 tokens for the raw-line ledger, the request crossed the Anthropic SDK's 10-minute threshold, and it now refuses to run without streaming. The fix is to switch the two long AI calls to streaming mode (same result, delivered incrementally):
+
+----- USER  (2026-08-09 20:14 UTC) -----
+[Request interrupted by user]
+
+----- CLAUDE  (2026-08-09 20:36 UTC) -----
+No response requested.
+
+----- USER  (2026-08-09 20:36 UTC) -----
+[screenshot attached]
+
+----- CLAUDE  (2026-08-09 20:37 UTC) -----
+That's the structured-output grammar hitting Anthropic's size limit — by embedding the raw-line schema inside all 13 categories, I made the compiled JSON grammar 13× bigger than it needs to be. The fix: collect raw lines in a single top-level array (each entry tagged with its category), then fold them back into the categories in code — same data reaching the UI, much smaller grammar:
+
