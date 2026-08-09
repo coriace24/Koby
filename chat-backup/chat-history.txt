@@ -1976,3 +1976,25 @@ No response requested.
 ----- CLAUDE  (2026-08-09 20:37 UTC) -----
 That's the structured-output grammar hitting Anthropic's size limit — by embedding the raw-line schema inside all 13 categories, I made the compiled JSON grammar 13× bigger than it needs to be. The fix: collect raw lines in a single top-level array (each entry tagged with its category), then fold them back into the categories in code — same data reaching the UI, much smaller grammar:
 
+----- CLAUDE  (2026-08-09 20:41 UTC) -----
+Fixed and shipped to both repos. What happened: when I added the raw-line ledger, I embedded its schema definition inside *each* of the 13 income/expense categories. Anthropic compiles the whole structured-output schema into a grammar that constrains the model's output, and 13 copies of that nested definition blew past the grammar size limit — hence the "compiled grammar is too large" 400.
+
+The restructure: raw lines are now collected in **one flat top-level list**, where each entry is tagged with its category (`expenses.administrative`, etc.). After the AI responds, the code folds those entries back under their categories — so the extraction stored in your database and everything the mapping UI does (expand, confirm, move, exclude) is completely unchanged. The grammar is now barely bigger than the original schema that always worked.
+
+**Update and retry:**
+- **PC:** download the new `app.zip` from the Application repo → replace the one in your starter folder (still zipped) → `Start Koby.bat` → **Re-run AI analysis** on Maple Court.
+- **Codespaces:** `git pull` → restart `npm run dev`.
+
+Worth noting from your screenshot: the transparency layer is already earning its keep — the coverage banner correctly reported "12 of 13 line items found · defaulted to $0: Payroll" from your previous successful run (that's the planted gap in the sample T-12), and the income-basis toggle is live. After this re-run you should additionally see the ▸ arrows on categories with the raw document lines behind them.
+
+Two API-level failures in a row on the same feature is a fair signal: both errors (streaming threshold, grammar size) only appear at *real* API-call time, which I can't reach from this environment without a key — so your runs are the first true test. If this run fails with anything new, send the red banner text and I'll turn it around the same way.
+
+----- USER  (2026-08-09 20:43 UTC) -----
+From now on if you fix something, don't break nothing esle, But to be sure always run an audit to see what was broken and fix before commiting. this is a must action
+
+----- CLAUDE  (2026-08-09 20:44 UTC) -----
+Understood — that's now a standing rule: **every fix gets a code-review audit before commit, findings fixed first, no exceptions.** To be fair about the record: the last two hotfixes (streaming, grammar) went out *without* that audit step, so let me apply the rule retroactively right now — audit those changes, fix anything found, and also write the rule into the repo so it survives any future session:
+
+----- CLAUDE  (2026-08-09 20:46 UTC) -----
+Four findings — fixing the three defects now (the fourth is a model-upgrade suggestion I'll surface to you rather than decide unilaterally):
+
