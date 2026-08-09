@@ -2,7 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import * as XLSX from "xlsx";
 import { readUpload } from "./storage";
 
-const DEFAULT_MODEL = process.env.ANTHROPIC_MODEL || "claude-opus-4-8";
+const DEFAULT_MODEL = process.env.ANTHROPIC_MODEL || "claude-opus-5";
 
 function resolveModel(override?: string | null): string {
   return override && override.trim() ? override : DEFAULT_MODEL;

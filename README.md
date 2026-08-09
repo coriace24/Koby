@@ -94,7 +94,7 @@ Open http://localhost:3000, register an account, and create your first analysis.
 | `DATABASE_URL` | SQLite location, default `file:./dev.db` |
 | `SESSION_SECRET` | Secret used to sign session cookies — change it in production |
 | `ANTHROPIC_API_KEY` | Anthropic API key. Without it, uploads and the underwriting math still work, but AI extraction/summaries return a configuration error |
-| `ANTHROPIC_MODEL` | Optional model override (default `claude-opus-4-8`) |
+| `ANTHROPIC_MODEL` | Optional model override (default `claude-opus-5`) |
 | `BILLING_ENFORCED` | `"true"` makes each AI run consume 1 credit and blocks runs at 0 credits (default off — unlimited local use). Usage is metered either way |
 | `INVITE_CODE` | If set, new registrations must supply this code; leave empty for open signup |
 

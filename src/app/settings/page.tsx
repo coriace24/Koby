@@ -2,18 +2,12 @@
 
 import { useEffect, useState } from "react";
 import Header from "@/components/Header";
+import { AI_MODELS } from "@/lib/models";
 
 const input =
   "w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500";
 const label = "block text-sm font-medium mb-1";
 const card = "bg-white border border-slate-200 rounded-xl p-6";
-
-const AI_MODELS = [
-  { value: "", label: "Server default (claude-opus-4-8)" },
-  { value: "claude-opus-4-8", label: "Claude Opus 4.8 — most capable" },
-  { value: "claude-sonnet-5", label: "Claude Sonnet 5 — near-Opus quality, ~60% cheaper" },
-  { value: "claude-haiku-4-5", label: "Claude Haiku 4.5 — fastest and cheapest" },
-];
 
 interface Settings {
   name: string;
