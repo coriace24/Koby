@@ -79,6 +79,14 @@ npm run dev
 
 Open http://localhost:3000, register an account, and create your first analysis.
 
+- `npm test` runs the underwriting-engine test suite (22 tests anchored to the reference
+  Excel calculator).
+- **No dev tools? Use the Windows desktop package instead** — see the companion
+  [Application repo](https://github.com/coriace24/Application): extract a small starter
+  zip, double-click `Start Koby.bat`, and the app installs itself into `Documents\Koby`.
+- After pulling updates into an existing install, re-run `npx prisma@6.19.3 db push`
+  (schema changes) and restart the dev server.
+
 ### Environment variables (`.env`)
 
 | Variable | Purpose |
@@ -104,9 +112,10 @@ inputs to enter and the results to expect. Start there.
    per-figure sources, and flags data-quality issues; the underwriting engine computes all
    metrics; Claude then writes the overview, opportunities, risks, and assumption notes
    grounded in those computed figures.
-4. **Review & adjust** — edit assumptions (market rent, renovation plan, vacancy, financing)
-   or override extracted figures; metrics recalculate instantly. Re-run the AI analysis to
-   refresh the written summary.
+4. **Review & adjust** — edit assumptions (market rent, renovation plan, vacancy, financing),
+   override extracted totals, and open each category's raw-line ledger to confirm, move, or
+   exclude the document lines the AI mapped into it; metrics recalculate instantly. Re-run
+   the AI analysis to refresh the written summary.
 5. **Export** the branded PDF investment summary, or create a **share link** so investors
    can view a read-only summary page without an account.
 
