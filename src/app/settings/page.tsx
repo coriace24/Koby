@@ -28,6 +28,11 @@ interface Settings {
   whatIfRentDelta: number;
   companyName: string | null;
   companyContact: string | null;
+  companyPhone: string | null;
+  companyEmail: string | null;
+  companyWebsite: string | null;
+  companyAddress: string | null;
+  companyLicense: string | null;
   brandColor: string | null;
   usage?: { runs: number; inputTokens: number; outputTokens: number; costUsd: number };
   credits?: number;
@@ -145,19 +150,57 @@ export default function SettingsPage() {
           }}
           className="grid sm:grid-cols-3 gap-4"
         >
-          <div>
+          <div className="sm:col-span-2">
             <label className={label}>Company / your name</label>
             <input name="companyName" defaultValue={s.companyName ?? ""} className={input} placeholder="Acme Realty Group" />
           </div>
           <div>
-            <label className={label}>Contact line</label>
-            <input name="companyContact" defaultValue={s.companyContact ?? ""} className={input} placeholder="jane@acme.com · (555) 010-2233" />
+            <label className={label}>License / DRE #</label>
+            <input name="companyLicense" defaultValue={s.companyLicense ?? ""} className={input} placeholder="DRE #01234567" />
           </div>
           <div>
-            <label className={label}>Accent color (hex)</label>
-            <input name="brandColor" defaultValue={s.brandColor ?? ""} className={input} placeholder="#1a365d" />
+            <label className={label}>Phone</label>
+            <input name="companyPhone" type="tel" defaultValue={s.companyPhone ?? ""} className={input} placeholder="(555) 010-2233" />
           </div>
-          <div className="sm:col-span-3">
+          <div>
+            <label className={label}>Email</label>
+            <input name="companyEmail" type="email" defaultValue={s.companyEmail ?? ""} className={input} placeholder="jane@acme.com" />
+          </div>
+          <div>
+            <label className={label}>Website</label>
+            <input name="companyWebsite" defaultValue={s.companyWebsite ?? ""} className={input} placeholder="acmerealty.com" />
+          </div>
+          <div className="sm:col-span-2">
+            <label className={label}>Office address</label>
+            <input name="companyAddress" defaultValue={s.companyAddress ?? ""} className={input} placeholder="100 Main St, Suite 200, Omaha, NE" />
+          </div>
+          <div>
+            <label className={label}>Tagline / extra line</label>
+            <input name="companyContact" defaultValue={s.companyContact ?? ""} className={input} placeholder="Multifamily investment specialists" />
+          </div>
+          <div className="sm:col-span-3 flex flex-wrap items-end gap-4">
+            <div>
+              <label className={label}>Accent color</label>
+              <div className="flex items-center gap-2">
+                <input
+                  name="brandColor"
+                  type="color"
+                  value={s.brandColor ?? "#1a365d"}
+                  onChange={(e) => setS({ ...s, brandColor: e.target.value })}
+                  className="h-10 w-16 rounded-md border border-slate-300 cursor-pointer p-1 bg-white"
+                />
+                <span className="text-xs text-slate-500">{s.brandColor ?? "#1a365d (default)"}</span>
+                {s.brandColor && (
+                  <button
+                    type="button"
+                    onClick={() => save({ brandColor: null }, "Accent color reset to default.")}
+                    className="text-xs text-blue-700 hover:underline"
+                  >
+                    Reset to default
+                  </button>
+                )}
+              </div>
+            </div>
             <button type="submit" disabled={busy} className="rounded-md bg-blue-700 text-white px-5 py-2 text-sm font-medium hover:bg-blue-800 disabled:opacity-50">
               Save branding
             </button>

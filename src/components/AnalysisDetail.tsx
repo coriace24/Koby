@@ -699,7 +699,8 @@ export default function AnalysisDetail({ id }: { id: string }) {
           operating costs. Metrics update on save; the AI can then write its analysis from these inputs.
         </p>
         <form onSubmit={saveCalculator}>
-          <h3 className="text-base font-semibold text-slate-800 border-b border-slate-200 pb-1 mb-3">
+          <div className="rounded-xl border border-green-300 bg-green-50/60 p-4 mb-5">
+          <h3 className="text-base font-semibold text-green-800 border-b border-green-200 pb-1 mb-3">
             Income
           </h3>
           <h4 className="text-sm font-medium text-slate-500 mb-2">Unit mix & rents ($/month)</h4>
@@ -831,12 +832,14 @@ export default function AnalysisDetail({ id }: { id: string }) {
               </tr>
             </tbody>
           </table>
-          <p className="text-xs text-slate-500 mb-5">
+          <p className="text-xs text-slate-500">
             A vacancy haircut of {data.vacancyAssumption ?? 5}% (editable in Assumptions) is applied to
             the unit-mix rent. Other income is not reduced for vacancy.
           </p>
+          </div>
 
-          <h3 className="text-base font-semibold text-slate-800 border-b border-slate-200 pb-1 mb-3">
+          <div className="rounded-xl border border-red-300 bg-red-50/60 p-4 mb-5">
+          <h3 className="text-base font-semibold text-red-800 border-b border-red-200 pb-1 mb-3">
             Expenses
           </h3>
           <h4 className="text-sm font-medium text-slate-500 mb-2">
@@ -853,6 +856,7 @@ export default function AnalysisDetail({ id }: { id: string }) {
                 />
               </div>
             ))}
+          </div>
           </div>
           <div className="flex items-center gap-3">
             <button

@@ -56,11 +56,13 @@ export async function PATCH(request: NextRequest) {
     if (n !== null && n >= 1 && n <= 40) data.defaultLoanTermYears = Math.round(n);
   }
   // Report branding
-  if ("companyName" in b && (typeof b.companyName === "string" || b.companyName === null)) {
-    data.companyName = b.companyName?.trim() || null;
-  }
-  if ("companyContact" in b && (typeof b.companyContact === "string" || b.companyContact === null)) {
-    data.companyContact = b.companyContact?.trim() || null;
+  for (const key of [
+    "companyName", "companyContact", "companyPhone", "companyEmail",
+    "companyWebsite", "companyAddress", "companyLicense",
+  ] as const) {
+    if (key in b && (typeof b[key] === "string" || b[key] === null)) {
+      data[key] = (b[key] as string | null)?.trim().slice(0, 200) || null;
+    }
   }
   if ("brandColor" in b) {
     const c = typeof b.brandColor === "string" ? b.brandColor.trim() : "";

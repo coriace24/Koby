@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { computeMetrics, parseExtraction, parseCapRateBands } from "@/lib/metrics";
 import { getOrCreateSettings } from "@/lib/settings";
+import { brandingContactLines } from "@/lib/report";
 import type { AiSummary } from "@/lib/ai";
 
 export const dynamic = "force-dynamic";
@@ -44,9 +45,11 @@ export default async function SharePage({ params }: { params: Promise<{ token: s
     <main className="max-w-3xl mx-auto w-full px-6 py-10 space-y-6">
       <div>
         <div className="text-xs font-semibold tracking-wide text-blue-900 uppercase">{brand}</div>
-        {settings.companyContact && (
-          <div className="text-xs text-slate-500">{settings.companyContact}</div>
-        )}
+        {brandingContactLines(settings).map((line, i) => (
+          <div key={i} className="text-xs text-slate-500">
+            {line}
+          </div>
+        ))}
         <h1 className="text-2xl font-bold mt-2">{a.address}</h1>
         <p className="text-sm text-slate-500 mt-1">
           {a.units} units · {money(a.purchasePrice)} · {a.propertyType} · Built {a.yearBuilt}

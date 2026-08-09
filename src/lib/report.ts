@@ -7,8 +7,30 @@ import type { FullMetrics } from "./metrics";
 
 export interface ReportBranding {
   companyName?: string | null;
-  companyContact?: string | null;
+  companyContact?: string | null; // tagline / extra line
+  companyPhone?: string | null;
+  companyEmail?: string | null;
+  companyWebsite?: string | null;
+  companyAddress?: string | null;
+  companyLicense?: string | null;
   brandColor?: string | null; // hex
+}
+
+// "phone · email · website" style line from whichever fields are filled in.
+export function brandingContactLines(b: ReportBranding): string[] {
+  const lines: string[] = [];
+  const contact = [b.companyPhone, b.companyEmail, b.companyWebsite]
+    .map((v) => v?.trim())
+    .filter(Boolean)
+    .join(" · ");
+  if (contact) lines.push(contact);
+  const office = [b.companyAddress, b.companyLicense]
+    .map((v) => v?.trim())
+    .filter(Boolean)
+    .join(" · ");
+  if (office) lines.push(office);
+  if (b.companyContact?.trim()) lines.push(b.companyContact.trim());
+  return lines;
 }
 
 const money = (n: number | null | undefined) =>
@@ -52,8 +74,8 @@ export function buildReportPdf(
   // Header
   const brandLine = branding.companyName?.trim() || "Koby AI Underwriting Assistant";
   doc.font("Helvetica-Bold").fontSize(11).fillColor(accent).text(brandLine.toUpperCase());
-  if (branding.companyContact?.trim()) {
-    doc.font("Helvetica").fontSize(9).fillColor("#555555").text(branding.companyContact.trim());
+  for (const line of brandingContactLines(branding)) {
+    doc.font("Helvetica").fontSize(9).fillColor("#555555").text(line);
   }
   doc.moveDown(0.6);
   doc.font("Helvetica-Bold").fontSize(20).fillColor(accent).text("Investment Analysis Summary");

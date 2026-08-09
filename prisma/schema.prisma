@@ -35,7 +35,12 @@ model UserSettings {
 
   // Report branding
   companyName    String?
-  companyContact String? // phone / email / license line shown on reports
+  companyContact String? // free-form contact line shown on reports
+  companyPhone   String?
+  companyEmail   String?
+  companyWebsite String?
+  companyAddress String?
+  companyLicense String? // license / DRE number
   brandColor     String? // hex accent color for reports, e.g. #1a365d
 }
 
