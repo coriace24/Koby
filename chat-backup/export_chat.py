@@ -82,16 +82,50 @@ for role, ts, text in entries:
     else:
         merged.append((role, ts, text))
 
+# MERGE-SAFE: the session transcript is periodically truncated by the harness
+# (compaction / container recycling), so the committed chat-history.txt is the
+# archive of record. Parse it and only APPEND messages it doesn't already have —
+# never overwrite history with a shorter export.
+HEADER_RE = re.compile(r"^----- (USER|CLAUDE)  \((.*?) UTC\) -----$")
+
+def parse_existing(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            content = f.read()
+    except FileNotFoundError:
+        return []
+    blocks = []
+    current = None
+    for line in content.split("\n"):
+        m = HEADER_RE.match(line)
+        if m:
+            if current:
+                blocks.append((current[0], current[1], "\n".join(current[2]).strip()))
+            current = ("user" if m.group(1) == "USER" else "assistant", m.group(2), [])
+        elif current is not None:
+            current[2].append(line)
+    if current:
+        blocks.append((current[0], current[1], "\n".join(current[2]).strip()))
+    return blocks
+
+def key(role, ts, text):
+    return (role, ts, text.strip()[:80])
+
+existing = parse_existing(DST)
+seen = {key(*b) for b in existing}
+appended = [b for b in merged if key(*b) not in seen]
+final = existing + appended
+
 with open(DST, "w", encoding="utf-8") as out:
     out.write("KOBY PROJECT - CHAT BACKUP\n")
     out.write("Full conversation between the user (coriace24) and Claude,\n")
     out.write("from project start (2026-07-17). Tool activity, code output, and\n")
     out.write("internal reasoning are omitted; every user prompt and every visible\n")
     out.write("assistant reply is preserved in order.\n")
-    out.write("This file is regenerated at the end of every prompt.\n")
+    out.write("This file is updated (append-only) at the end of every prompt.\n")
     out.write("=" * 72 + "\n\n")
-    for role, ts, text in merged:
+    for role, ts, text in final:
         who = "USER" if role == "user" else "CLAUDE"
         out.write(f"----- {who}  ({ts} UTC) -----\n{text}\n\n")
 
-print(f"Wrote {DST}: {len(merged)} messages")
+print(f"Wrote {DST}: {len(final)} messages ({len(existing)} archived + {len(appended)} new)")
