@@ -1,23 +1,67 @@
 // Deterministic underwriting engine. All money values are annual USD unless noted.
+// Categories follow the Multifamily AI Financial Classification Dictionary V1.
 
 export interface IncomeStatement {
-  grossPotentialRent: number;
-  actualCollectedRent: number;
-  vacancyLoss: number;
-  otherIncome: number;
+  baseRent: number; // dictionary #1: scheduled/contract rent for occupying units
+  vacancyLoss: number; // #2: reduction of income
+  badDebt: number; // #3: collection/credit loss — reduction of income
+  concessions: number; // #4: free rent / specials — reduction of income
+  otherIncome: number; // total of #5–#12 (late fees, parking, laundry, RUBS, …)
+  // Extractions made before the dictionary restructure stored collected rent
+  // instead of base rent − reductions; when present it wins, so old analyses
+  // keep their numbers until re-run.
+  legacyActualCollected?: number;
 }
 
-export interface ExpenseStatement {
-  propertyTaxes: number;
-  insurance: number;
-  utilities: number;
-  repairsMaintenance: number;
-  managementFees: number;
-  payroll: number;
-  landscaping: number;
-  administrative: number;
-  other: number;
+// Operating-expense categories (#13–#31 + a catch-all). Keys are stable storage
+// ids — the first nine predate the dictionary and must not be renamed.
+export const EXPENSE_KEYS = [
+  "propertyTaxes", // #19
+  "insurance", // #20
+  "utilities", // #18
+  "repairsMaintenance", // #16 (+#17 turnover when the docs don't separate it)
+  "managementFees", // #13 property management (third-party fees, NOT payroll)
+  "payroll", // #14
+  "landscaping", // #21 (+#22 snow removal when combined)
+  "administrative", // #15 — high-review category
+  "other", // catch-all: anything fitting no category (flag for review)
+  "turnover", // #17 make-ready, when the docs separate it
+  "snowRemoval", // #22, when the docs separate it
+  "janitorial", // #23
+  "pestControl", // #24
+  "security", // #25
+  "marketing", // #26
+  "legal", // #27 (operating legal only)
+  "accounting", // #28
+  "officeSupplies", // #29
+  "bankFees", // #30
+  "licensesPermits", // #31
+] as const;
+export type ExpenseKey = (typeof EXPENSE_KEYS)[number];
+export type ExpenseStatement = Record<ExpenseKey, number>;
+
+export function emptyExpenses(): ExpenseStatement {
+  return Object.fromEntries(EXPENSE_KEYS.map((k) => [k, 0])) as ExpenseStatement;
 }
+
+// Below-NOI categories (#32–#36): tracked and reported, NEVER part of NOI.
+export const BELOW_NOI_KEYS = [
+  "capitalExpenditures", // #32 (incl. replacements/reserves per dictionary)
+  "tenantImprovements", // #33
+  "leasingCommissions", // #34
+  "debtService", // #35 (as found in documents; underwriting uses modeled debt)
+  "depreciationAmortization", // #36
+] as const;
+export type BelowNoiKey = (typeof BELOW_NOI_KEYS)[number];
+
+// Shared by the UI and the PDF report so the labels can never drift apart.
+export const BELOW_NOI_LABELS: Record<BelowNoiKey, string> = {
+  capitalExpenditures: "Capital expenditures (CapEx)",
+  tenantImprovements: "Tenant improvements",
+  leasingCommissions: "Leasing commissions",
+  debtService: "Debt service (per documents)",
+  depreciationAmortization: "Depreciation & amortization",
+};
 
 export interface FinancingInputs {
   purchasePrice: number;
@@ -65,25 +109,16 @@ export interface UnderwritingResult {
 }
 
 export function totalExpenses(e: ExpenseStatement): number {
-  return (
-    e.propertyTaxes +
-    e.insurance +
-    e.utilities +
-    e.repairsMaintenance +
-    e.managementFees +
-    e.payroll +
-    e.landscaping +
-    e.administrative +
-    e.other
-  );
+  return EXPENSE_KEYS.reduce((sum, k) => sum + (e[k] || 0), 0);
 }
 
 export function effectiveGrossIncome(i: IncomeStatement): number {
-  // Prefer actual collections when available; otherwise GPR less vacancy.
+  // Dictionary formula: base rent − vacancy − bad debt − concessions, plus
+  // other income. Legacy extractions carry collected rent instead.
   const rental =
-    i.actualCollectedRent > 0
-      ? i.actualCollectedRent
-      : Math.max(i.grossPotentialRent - i.vacancyLoss, 0);
+    i.legacyActualCollected && i.legacyActualCollected > 0
+      ? i.legacyActualCollected
+      : Math.max(i.baseRent - i.vacancyLoss - i.badDebt - i.concessions, 0);
   return rental + i.otherIncome;
 }
 
@@ -113,7 +148,7 @@ export function underwrite(
   const equity = cashNeeded(financing, renovationBudget).total;
   const cashFlow = noi - annualDebt;
 
-  const gpi = income.grossPotentialRent + income.otherIncome;
+  const gpi = income.baseRent + income.otherIncome;
 
   return {
     effectiveGrossIncome: egi,

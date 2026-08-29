@@ -38,28 +38,40 @@ export interface ExtractedLineItem {
 }
 
 export interface ExcludedLine extends RawLine {
-  fromSection: "income" | "expenses";
+  fromSection: "income" | "expenses" | "belowNoi";
   fromKey: string; // category it was extracted into before the user excluded it
 }
 
+// Category ids follow the Multifamily AI Financial Classification Dictionary V1.
+// Storage keys are stable: the pre-dictionary keys (grossPotentialRent = base
+// rent, the first nine expense keys) are kept so older analyses stay readable.
+export const INCOME_KEYS = [
+  "grossPotentialRent", // #1 Base rent (storage key kept for compatibility)
+  "vacancyLoss", // #2
+  "badDebt", // #3
+  "concessions", // #4
+  "lateFees", // #5
+  "applicationFees", // #6
+  "petIncome", // #7
+  "parkingIncome", // #8
+  "laundryIncome", // #9
+  "storageIncome", // #10
+  "utilityReimbursement", // #11 — never netted against utility expense
+  "miscIncome", // #12 — flag for review when the description is unclear
+] as const;
+export type IncomeKey = (typeof INCOME_KEYS)[number];
+
+export { EXPENSE_KEYS, BELOW_NOI_KEYS } from "./underwriting";
+import { EXPENSE_KEYS as EXPENSE_KEYS_, BELOW_NOI_KEYS as BELOW_NOI_KEYS_, type ExpenseKey, type BelowNoiKey } from "./underwriting";
+
 export interface Extraction {
-  income: {
-    grossPotentialRent: ExtractedLineItem;
-    actualCollectedRent: ExtractedLineItem;
-    vacancyLoss: ExtractedLineItem;
-    otherIncome: ExtractedLineItem;
+  income: Record<IncomeKey, ExtractedLineItem> & {
+    // Present only in pre-dictionary extractions; when > 0 the engine uses it
+    // instead of base rent − reductions, so old analyses keep their numbers.
+    actualCollectedRent?: ExtractedLineItem;
   };
-  expenses: {
-    propertyTaxes: ExtractedLineItem;
-    insurance: ExtractedLineItem;
-    utilities: ExtractedLineItem;
-    repairsMaintenance: ExtractedLineItem;
-    managementFees: ExtractedLineItem;
-    payroll: ExtractedLineItem;
-    landscaping: ExtractedLineItem;
-    administrative: ExtractedLineItem;
-    other: ExtractedLineItem;
-  };
+  expenses: Record<ExpenseKey, ExtractedLineItem>;
+  belowNoi: Record<BelowNoiKey, ExtractedLineItem>; // #32–#36 — NEVER in NOI
   rentRoll: {
     unitCount: number;
     averageRentPerUnit: number; // $/unit/month
@@ -67,6 +79,47 @@ export interface Extraction {
   };
   dataFlags: { severity: "info" | "warning" | "critical"; message: string }[];
   excluded?: ExcludedLine[]; // lines the user removed from the analysis entirely
+}
+
+const emptyItem = (): ExtractedLineItem => ({ annualAmount: 0, source: "NOT FOUND", lines: [] });
+
+// Normalize any stored extraction (old or new shape) to the full dictionary
+// shape: every category present, legacy otherIncome mapped to miscIncome.
+export function normalizeExtraction(raw: unknown): Extraction | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, any>;
+  const income = {} as Extraction["income"];
+  for (const k of INCOME_KEYS) income[k] = r.income?.[k] ?? emptyItem();
+  // Keep the legacy category whenever it still carries data — a user edit can
+  // zero its total while lines remain, and dropping it would lose them.
+  const legacyCollected = r.income?.actualCollectedRent;
+  if (legacyCollected && (legacyCollected.annualAmount > 0 || legacyCollected.lines?.length)) {
+    income.actualCollectedRent = legacyCollected;
+  }
+  // Pre-dictionary extractions had a single lumped otherIncome line.
+  if (r.income?.otherIncome?.annualAmount && income.miscIncome.annualAmount === 0) {
+    income.miscIncome = r.income.otherIncome;
+  }
+  const expenses = {} as Extraction["expenses"];
+  for (const k of EXPENSE_KEYS_) expenses[k] = r.expenses?.[k] ?? emptyItem();
+  const belowNoi = {} as Extraction["belowNoi"];
+  for (const k of BELOW_NOI_KEYS_) belowNoi[k] = r.belowNoi?.[k] ?? emptyItem();
+  return {
+    income,
+    expenses,
+    belowNoi,
+    rentRoll: r.rentRoll ?? { unitCount: 0, averageRentPerUnit: 0, occupancyPct: 0 },
+    dataFlags: Array.isArray(r.dataFlags) ? r.dataFlags : [],
+    excluded: Array.isArray(r.excluded)
+      ? // The lumped otherIncome bucket became miscIncome; remap old excluded
+        // entries so their "restore" target still exists.
+        r.excluded.map((e: ExcludedLine) =>
+          e.fromSection === "income" && e.fromKey === "otherIncome"
+            ? { ...e, fromKey: "miscIncome" }
+            : e
+        )
+      : undefined,
+  };
 }
 
 export interface AiSummary {
@@ -130,27 +183,19 @@ async function docContentBlocks(
 
 // ---------- Extraction ----------
 
-const lineItemSchema = {
-  type: "object",
-  properties: {
-    annualAmount: { type: "number" },
-    source: { type: "string" },
-  },
-  required: ["annualAmount", "source"],
-  additionalProperties: false,
-} as const;
-
+// All assignable category ids (37): built from the same key arrays the engine
+// and UI use, so the enum can never drift from the storage shape.
 const CATEGORY_IDS = [
-  "income.grossPotentialRent", "income.actualCollectedRent", "income.vacancyLoss", "income.otherIncome",
-  "expenses.propertyTaxes", "expenses.insurance", "expenses.utilities", "expenses.repairsMaintenance",
-  "expenses.managementFees", "expenses.payroll", "expenses.landscaping", "expenses.administrative",
-  "expenses.other",
-] as const;
+  ...INCOME_KEYS.map((k) => `income.${k}`),
+  ...EXPENSE_KEYS_.map((k) => `expenses.${k}`),
+  ...BELOW_NOI_KEYS_.map((k) => `belowNoi.${k}`),
+];
 
 // Layer 1: the original document lines, labels preserved verbatim. A single flat
-// array (instead of nesting this schema in all 13 categories) keeps the compiled
-// structured-output grammar small; extractFromDocuments folds the entries back
-// under their categories.
+// array keeps the compiled structured-output grammar small (nesting subschemas
+// into every category blew the API's grammar-size limit); category totals are
+// computed in code as the sum of their lines, so total-equals-sum holds by
+// construction.
 const rawLinesSchema = {
   type: "array",
   items: {
@@ -170,43 +215,7 @@ const rawLinesSchema = {
 const EXTRACTION_SCHEMA = {
   type: "object",
   properties: {
-    income: {
-      type: "object",
-      properties: {
-        grossPotentialRent: lineItemSchema,
-        actualCollectedRent: lineItemSchema,
-        vacancyLoss: lineItemSchema,
-        otherIncome: lineItemSchema,
-      },
-      required: ["grossPotentialRent", "actualCollectedRent", "vacancyLoss", "otherIncome"],
-      additionalProperties: false,
-    },
-    expenses: {
-      type: "object",
-      properties: {
-        propertyTaxes: lineItemSchema,
-        insurance: lineItemSchema,
-        utilities: lineItemSchema,
-        repairsMaintenance: lineItemSchema,
-        managementFees: lineItemSchema,
-        payroll: lineItemSchema,
-        landscaping: lineItemSchema,
-        administrative: lineItemSchema,
-        other: lineItemSchema,
-      },
-      required: [
-        "propertyTaxes",
-        "insurance",
-        "utilities",
-        "repairsMaintenance",
-        "managementFees",
-        "payroll",
-        "landscaping",
-        "administrative",
-        "other",
-      ],
-      additionalProperties: false,
-    },
+    rawLines: rawLinesSchema,
     rentRoll: {
       type: "object",
       properties: {
@@ -229,41 +238,63 @@ const EXTRACTION_SCHEMA = {
         additionalProperties: false,
       },
     },
-    rawLines: rawLinesSchema,
   },
-  required: ["income", "expenses", "rentRoll", "dataFlags", "rawLines"],
+  required: ["rawLines", "rentRoll", "dataFlags"],
   additionalProperties: false,
 };
 
-const EXTRACTION_SYSTEM = `You are a commercial real estate underwriting analyst assistant. You extract financial data from multifamily property documents (rent rolls, T-12 operating statements, offering memorandums, tax records, utility statements).
+const EXTRACTION_SYSTEM = `You are a commercial real estate underwriting analyst assistant. You extract financial data from multifamily property documents (rent rolls, T-12 operating statements, offering memorandums, tax records, utility statements) and classify every line item using the Multifamily Financial Classification Dictionary below.
 
-Rules:
-- Extract ANNUAL dollar amounts. If a document covers fewer than 12 months, annualize and flag it in dataFlags (e.g. "Utility expenses only include four months of data. Annualization applied and verification is recommended.").
-- Every extracted number must cite its source: the document name and the specific row/section it came from. If a value could not be found, set annualAmount to 0 and source to "NOT FOUND" and add a dataFlag (e.g. "Property taxes were not included in the provided documents.").
-- Flag questionable values in dataFlags (e.g. insurance far below typical market levels, vacancy inconsistent between rent roll and T-12, totals that don't reconcile).
-- rentRoll.averageRentPerUnit is the average in-place monthly rent per occupied unit from the rent roll.
-- Do not invent numbers. Prefer the most recent trailing-12 data when multiple periods exist.
-
-Raw line ledger — every property owner labels their financials differently, so preserve the document's own wording:
-- "rawLines" lists EVERY original document line item you used, with the category you assigned it to: label EXACTLY as written in the document (never re-word it), that line's annual amount, its source, and a confidence.
+Core rules:
+- Extract ANNUAL dollar amounts. If a document covers fewer than 12 months, annualize and flag it in dataFlags.
+- "rawLines" lists EVERY original document line item you used: label EXACTLY as written in the document (never re-word it), the category you assigned, that line's annual amount, its source (document name + row/section), and a confidence. Never merge two document rows into one entry.
 - confidence "low" whenever the mapping is a judgment call (ambiguous label, could belong to another category, unusual grouping). "high" only for unmistakable mappings.
-- A category's annualAmount must equal the sum of its rawLines entries for that category. A category with no matching document lines has annualAmount 0 and no rawLines entries.
-- Never merge two document lines into one entry; one document row = one rawLines entry.
+- Do not invent numbers. Prefer the most recent trailing-12 data when multiple periods exist.
+- Add a dataFlag for every important category with no document line (e.g. "Property taxes were not found in the provided documents"), for questionable values (insurance far below market, rent roll vs T-12 inconsistencies, totals that don't reconcile), and wherever a rule below says to flag.
+- rentRoll.averageRentPerUnit is the average in-place monthly rent per occupied unit from the rent roll.
 
-Category mapping guide (synonyms owners commonly use):
-- grossPotentialRent: gross scheduled rent, market rent, gross potential income, scheduled rent at 100%.
-- actualCollectedRent: rent collected, net rental income, rental receipts, effective rental income.
-- vacancyLoss: vacancy, vacancy & credit loss, concessions, bad debt, loss to lease.
-- otherIncome: laundry, parking, pet fees/rent, storage, application fees, late fees, RUBS/utility reimbursement.
-- propertyTaxes: real estate taxes, RE taxes, property tax.
-- insurance: property/hazard/liability insurance.
-- utilities: water, sewer, gas, electric, trash/refuse.
-- repairsMaintenance: repairs, maintenance, turns, make-ready, cleaning, contract services, supplies, pest control.
-- managementFees: property management, PM fee, asset management fee.
-- payroll: salaries, wages, on-site staff/manager, payroll taxes, employee benefits.
-- landscaping: grounds, lawn care, snow removal, CAM/common area maintenance.
-- administrative: office, legal, accounting, professional fees, marketing, advertising, permits/licenses.
-- other: reserves, capital expenditure holdback, and anything that fits no category above (keep its original label so the user can re-map it).`;
+INCOME categories:
+- income.grossPotentialRent — BASE RENT: rent for occupying units (a.k.a. rental income, rent, apartment/scheduled/contract/gross/market/potential rent). Includes contractual rent increases. Does NOT include late fees, parking, laundry, pet fees, or utility reimbursements. If the documents only report COLLECTED rent (no scheduled figure), put collections here and add a dataFlag saying the figure is collections-based.
+- income.vacancyLoss — reduction: vacancy, physical/economic vacancy, loss to vacancy.
+- income.badDebt — reduction: bad debt, collection/credit loss, uncollectible rent, delinquency loss.
+- income.concessions — reduction: concessions, free rent, rent/move-in specials, discounts.
+- income.lateFees — late fees/charges, delinquency fees.
+- income.applicationFees — application/admin/administrative fees charged to tenants, move-in fees.
+- income.petIncome — pet rent/fees, animal fees.
+- income.parkingIncome — parking, garage income/rent.
+- income.laundryIncome — laundry, washer/dryer income.
+- income.storageIncome — storage rent/fees, lockers.
+- income.utilityReimbursement — RUBS, utility recovery/reimbursement (water, sewer, utility income). NEVER net this against utility expense — record both sides separately.
+- income.miscIncome — miscellaneous/other income. Flag for review when the underlying description is unclear.
+
+OPERATING EXPENSE categories:
+- expenses.managementFees — PROPERTY MANAGEMENT: third-party/percentage/fixed management fees. Does NOT include on-site employee wages (that is payroll). High confidence only when explicitly labeled.
+- expenses.payroll — salaries, wages, on-site staff/personnel, payroll taxes, benefits, bonuses. Not management fees, not contractors.
+- expenses.administrative — admin expense, G&A. HIGH-REVIEW category: owners put different things here — never automatically combine it with payroll or management fees; mark admin mappings "low" confidence unless unmistakable.
+- expenses.repairsMaintenance — R&M, repairs, maintenance (plumbing/electrical/HVAC/appliance/general). NOT major capital improvements or renovations (those are belowNoi.capitalExpenditures).
+- expenses.turnover — turnover, unit turn, make-ready, unit preparation (turnover cleaning/painting/minor repairs/flooring). Use expenses.repairsMaintenance instead when the documents don't separate turnover.
+- expenses.utilities — water, sewer, gas, electric, trash paid by the property. Keep separate from income.utilityReimbursement.
+- expenses.propertyTaxes — real estate/RE/county taxes. NOT income taxes or payroll taxes.
+- expenses.insurance — property/liability/casualty/building insurance.
+- expenses.landscaping — landscaping, lawn care, grounds (maintenance).
+- expenses.snowRemoval — snow removal/plowing, snow & ice. Use expenses.landscaping when the documents combine them.
+- expenses.janitorial — janitorial, cleaning services, custodial, housekeeping (common areas).
+- expenses.pestControl — pest control, extermination.
+- expenses.security — security services/guard, patrol, monitoring.
+- expenses.marketing — marketing, advertising, leasing advertising, promotion.
+- expenses.legal — legal/attorney fees for NORMAL operations. Acquisition, disposition, financing, or development legal costs: put in expenses.legal but add a dataFlag that they may be non-operating.
+- expenses.accounting — accounting/CPA/bookkeeping/audit fees.
+- expenses.officeSupplies — office expense/supplies/costs. May overlap with administrative — do not combine them yourself; keep each line where its label points and mark "low" confidence if unclear.
+- expenses.bankFees — bank/banking/credit-card/merchant/transaction fees.
+- expenses.licensesPermits — licenses, permits, inspection fees.
+- expenses.other — ONLY what fits no category above (e.g. HOA dues). Keep the original label and add a dataFlag so the user reviews it.
+
+BELOW-NOI categories (report them, but they are NEVER operating expenses and NEVER reduce NOI):
+- belowNoi.capitalExpenditures — CapEx, capital improvements/projects, replacements, reserves, roof/HVAC replacement, major renovation, parking lot.
+- belowNoi.tenantImprovements — TI, tenant buildout, leasehold improvements.
+- belowNoi.leasingCommissions — LC, leasing/broker commissions, leasing fees.
+- belowNoi.debtService — mortgage, loan payment, principal & interest, P&I, interest expense.
+- belowNoi.depreciationAmortization — depreciation, amortization, D&A.`;
 
 export interface AiUsage {
   model: string;
@@ -306,25 +337,34 @@ export async function extractFromDocuments(
 
   const text = response.content.find((b) => b.type === "text")?.text;
   if (!text) throw new Error("AI extraction returned no output.");
-  const parsed = JSON.parse(text) as Extraction & {
-    rawLines?: { category: string; label: string; annualAmount: number; source: string; confidence: "high" | "low" }[];
+  const parsed = JSON.parse(text) as {
+    rawLines: { category: string; label: string; annualAmount: number; source: string; confidence: "high" | "low" }[];
+    rentRoll: Extraction["rentRoll"];
+    dataFlags: Extraction["dataFlags"];
   };
-  // Fold the flat rawLines array back under each category (the UI's shape).
-  const { rawLines, ...extraction } = parsed;
-  for (const rl of rawLines ?? []) {
+
+  // Build the category structure from the flat line ledger: every category's
+  // total is the sum of its lines, so total-equals-sum holds by construction.
+  const extraction = normalizeExtraction({ rentRoll: parsed.rentRoll, dataFlags: parsed.dataFlags })!;
+  for (const rl of parsed.rawLines ?? []) {
     const [sec, key] = rl.category.split(".");
-    const bucket =
-      sec === "income" || sec === "expenses"
-        ? (extraction[sec] as Record<string, ExtractedLineItem>)[key]
+    const group =
+      sec === "income" || sec === "expenses" || sec === "belowNoi"
+        ? (extraction[sec] as Record<string, ExtractedLineItem>)
         : undefined;
-    if (bucket) {
-      (bucket.lines ??= []).push({
-        label: rl.label,
-        annualAmount: rl.annualAmount,
-        source: rl.source,
-        confidence: rl.confidence,
-      });
-    }
+    const bucket = group?.[key];
+    if (!bucket) continue;
+    (bucket.lines ??= []).push({
+      label: rl.label,
+      annualAmount: rl.annualAmount,
+      source: rl.source,
+      confidence: rl.confidence,
+    });
+    bucket.annualAmount += rl.annualAmount;
+    bucket.source =
+      bucket.lines!.length === 1
+        ? rl.source
+        : `${bucket.lines!.length} document lines (see the expanded category)`;
   }
   return {
     extraction,

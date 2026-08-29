@@ -8,7 +8,7 @@ something else; the audit is how that is enforced. No exceptions, even for
 one-line hotfixes.
 
 Also before committing:
-- `npx vitest run` (22 engine tests must pass) and `npm run build` must be clean.
+- `npx vitest run` (24 engine tests must pass) and `npm run build` must be clean.
 - If the change touches the underwriting math or the deal calculator, re-verify
   Excel parity (Test B in `samples/README.md`: NOI 78,320 · cap 7.832% ·
   PMT 5,401.66 · DSCR 1.2083 · total cash 210,000 · CoC 6.4286%).

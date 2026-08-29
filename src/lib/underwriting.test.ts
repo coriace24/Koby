@@ -12,6 +12,7 @@ import {
   loanBalanceAfter,
   irr,
   holdProjection,
+  emptyExpenses,
   type IncomeStatement,
   type ExpenseStatement,
   type FinancingInputs,
@@ -21,20 +22,18 @@ import {
 // $1M offer, 20% down, $10k closing, $800k loan @ 6.5% / 25yr,
 // $10,800/mo scheduled rent at 5% vacancy, $44,800/yr opex.
 const excelIncome: IncomeStatement = {
-  grossPotentialRent: 10800 * 12,
-  actualCollectedRent: 10260 * 12, // vacancy-adjusted collections
-  vacancyLoss: 540 * 12,
+  baseRent: 10800 * 12,
+  vacancyLoss: 540 * 12, // 5% of scheduled rent
+  badDebt: 0,
+  concessions: 0,
   otherIncome: 0,
 };
 const excelExpenses: ExpenseStatement = {
+  ...emptyExpenses(),
   propertyTaxes: 24000,
   insurance: 7000,
-  utilities: 0,
   repairsMaintenance: 8000,
-  managementFees: 0,
-  payroll: 0,
   landscaping: 4800,
-  administrative: 0,
   other: 1000,
 };
 const excelFinancing: FinancingInputs = {
@@ -75,6 +74,26 @@ describe("underwrite — reference deal", () => {
     // (opex + debt) / GPI
     const expected = ((44_800 + r.annualDebtService) / (10_800 * 12)) * 100;
     expect(r.breakEvenOccupancy!).toBeCloseTo(expected, 6);
+  });
+
+  it("treats bad debt and concessions as reductions of income (dictionary #3/#4)", () => {
+    const withReductions = underwrite(
+      { ...excelIncome, badDebt: 2_400, concessions: 1_200 },
+      excelExpenses,
+      excelFinancing
+    );
+    expect(withReductions.effectiveGrossIncome).toBeCloseTo(r.effectiveGrossIncome - 3_600, 6);
+    expect(withReductions.noi).toBeCloseTo(r.noi - 3_600, 6);
+  });
+
+  it("lets legacy collected-rent extractions override the reduction math", () => {
+    const legacy = underwrite(
+      { ...excelIncome, badDebt: 9_999, legacyActualCollected: 10_260 * 12 },
+      excelExpenses,
+      excelFinancing
+    );
+    // Collected rent wins, so the bogus bad-debt reduction is ignored.
+    expect(legacy.noi).toBeCloseTo(r.noi, 6);
   });
 });
 

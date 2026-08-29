@@ -5,6 +5,10 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import StatusBadge from "./StatusBadge";
 import PageShell from "./PageShell";
+import { BELOW_NOI_LABELS as BELOW_NOI_LABELS_TYPED } from "@/lib/underwriting";
+
+// Widened for lookups by dynamic string keys (section/key pairs from state).
+const BELOW_NOI_LABELS: Record<string, string> = BELOW_NOI_LABELS_TYPED;
 
 // ---------- Types mirrored from the API ----------
 
@@ -20,13 +24,15 @@ interface LineItem {
   source: string;
   lines?: RawLine[];
 }
+type Section = "income" | "expenses" | "belowNoi";
 interface ExcludedLine extends RawLine {
-  fromSection: "income" | "expenses";
+  fromSection: Section;
   fromKey: string;
 }
 interface Extraction {
   income: Record<string, LineItem>;
   expenses: Record<string, LineItem>;
+  belowNoi: Record<string, LineItem>;
   rentRoll: { unitCount: number; averageRentPerUnit: number; occupancyPct: number };
   dataFlags: { severity: string; message: string }[];
   excluded?: ExcludedLine[];
@@ -43,7 +49,7 @@ interface OtherIncomeRow {
 }
 interface Metrics {
   dataSource: "documents" | "manual";
-  incomeBasis: "actual" | "scheduled";
+  belowNoiTotal: number;
   cashNeeded: {
     downPayment: number;
     closingCosts: number;
@@ -147,7 +153,6 @@ interface AnalysisData {
   carryingCosts: number | null;
   otherIncomeMonthly: number | null;
   otherIncomeItems: string | null;
-  incomeBasis: string | null;
   unitMix: string | null;
   manualOpex: string | null;
   units: number;
@@ -190,23 +195,50 @@ const pct = (n: number | null | undefined, d = 2) =>
   n === null || n === undefined ? "—" : `${n.toFixed(d)}%`;
 const ratio = (n: number | null | undefined) => (n === null || n === undefined ? "—" : n.toFixed(2));
 
+// Multifamily Financial Classification Dictionary V1 categories.
 const INCOME_LABELS: Record<string, string> = {
-  grossPotentialRent: "Gross potential rent",
-  actualCollectedRent: "Actual collected rent",
-  vacancyLoss: "Vacancy loss",
-  otherIncome: "Other income",
+  grossPotentialRent: "Base rent",
+  vacancyLoss: "Vacancy loss (−)",
+  badDebt: "Bad debt / collection loss (−)",
+  concessions: "Concessions (−)",
+  lateFees: "Late fees",
+  applicationFees: "Application / admin fees",
+  petIncome: "Pet income",
+  parkingIncome: "Parking income",
+  laundryIncome: "Laundry income",
+  storageIncome: "Storage income",
+  utilityReimbursement: "Utility reimbursement (RUBS)",
+  miscIncome: "Miscellaneous income",
+  actualCollectedRent: "Actual collected rent (legacy)",
 };
 const EXPENSE_LABELS: Record<string, string> = {
   propertyTaxes: "Property taxes",
   insurance: "Insurance",
   utilities: "Utilities",
   repairsMaintenance: "Repairs & maintenance",
-  managementFees: "Management fees",
+  turnover: "Turnover / make-ready",
+  managementFees: "Property management",
   payroll: "Payroll",
-  landscaping: "Landscaping",
+  landscaping: "Landscaping / grounds",
+  snowRemoval: "Snow removal",
+  janitorial: "Janitorial / cleaning",
+  pestControl: "Pest control",
+  security: "Security",
+  marketing: "Marketing / advertising",
+  legal: "Legal",
+  accounting: "Accounting",
+  officeSupplies: "Office / supplies",
+  bankFees: "Bank / credit card fees",
+  licensesPermits: "Licenses / permits",
   administrative: "Administrative",
   other: "Other operating expenses",
 };
+// The core categories the coverage banner reports on (others are situational).
+const CORE_COVERAGE: [("income" | "expenses"), string][] = [
+  ["income", "grossPotentialRent"], ["income", "vacancyLoss"],
+  ["expenses", "propertyTaxes"], ["expenses", "insurance"], ["expenses", "utilities"],
+  ["expenses", "repairsMaintenance"], ["expenses", "managementFees"], ["expenses", "payroll"],
+];
 const DOC_TYPES: [string, string][] = [
   ["RENT_ROLL", "Rent Roll (required)"],
   ["T12", "T-12 Operating Statement (required)"],
@@ -235,6 +267,21 @@ function Stat({ label, value, accent, info }: { label: string; value: string; ac
   );
 }
 
+// Core fields mirror the reference Excel calculator; the advanced set covers
+// the rest of the dictionary and stays collapsed until pulled up.
+const OPEX_FIELDS_ADVANCED: [string, string][] = [
+  ["turnover", "Turnover / make-ready"],
+  ["snowRemoval", "Snow removal"],
+  ["janitorial", "Janitorial / cleaning"],
+  ["pestControl", "Pest control"],
+  ["security", "Security"],
+  ["marketing", "Marketing / advertising"],
+  ["legal", "Legal"],
+  ["accounting", "Accounting"],
+  ["officeSupplies", "Office / supplies"],
+  ["bankFees", "Bank / credit card fees"],
+  ["licensesPermits", "Licenses / permits"],
+];
 const OPEX_FIELDS: [string, string][] = [
   ["propertyTaxes", "Property taxes"],
   ["insurance", "Insurance"],
@@ -257,6 +304,7 @@ export default function AnalysisDetail({ id }: { id: string }) {
   const [mixRows, setMixRows] = useState<UnitMixRow[]>([]);
   const [incomeRows, setIncomeRows] = useState<OtherIncomeRow[]>([]);
   const [savingCalc, setSavingCalc] = useState(false);
+  const [showAdvancedOpex, setShowAdvancedOpex] = useState(false);
   const [tab, setTab] = useState<"manual" | "documents">("manual");
   const [expandedCats, setExpandedCats] = useState<Record<string, boolean>>({});
   const [mappingBusy, setMappingBusy] = useState(false);
@@ -293,6 +341,10 @@ export default function AnalysisDetail({ id }: { id: string }) {
       } catch {
         setIncomeRows([]);
       }
+      try {
+        const opex = d.manualOpex ? JSON.parse(d.manualOpex) : {};
+        if (OPEX_FIELDS_ADVANCED.some(([k]) => opex[k] > 0)) setShowAdvancedOpex(true);
+      } catch {}
     } else if (res.status === 404) {
       setError("Analysis not found.");
     } else {
@@ -343,7 +395,7 @@ export default function AnalysisDetail({ id }: { id: string }) {
     setError(null);
     const fd = new FormData(e.currentTarget);
     const manualOpex: Record<string, number> = {};
-    for (const [key] of OPEX_FIELDS) {
+    for (const [key] of [...OPEX_FIELDS, ...OPEX_FIELDS_ADVANCED]) {
       manualOpex[key] = parseFloat(String(fd.get(`opex_${key}`) || "0")) || 0;
     }
     const body = {
@@ -403,16 +455,6 @@ export default function AnalysisDetail({ id }: { id: string }) {
     await load();
   }
 
-  async function setIncomeBasis(basis: "actual" | "scheduled") {
-    setError(null);
-    const res = await fetch(`/api/analyses/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ incomeBasis: basis }),
-    });
-    if (res.ok) setData(await res.json());
-  }
-
   async function saveAssumptions(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setSavingAssumptions(true);
@@ -458,7 +500,7 @@ export default function AnalysisDetail({ id }: { id: string }) {
     if (!item.source.includes("adjusted by user")) item.source = `${item.source} (adjusted by user)`;
   }
 
-  async function moveLine(section: "income" | "expenses", fromKey: string, idx: number, toKey: string) {
+  async function moveLine(section: Section, fromKey: string, idx: number, toKey: string, toSection?: Section) {
     if (!data?.extractionParsed || mappingBusy) return;
     const next = structuredClone(data.extractionParsed);
     const from = next[section][fromKey];
@@ -467,7 +509,8 @@ export default function AnalysisDetail({ id }: { id: string }) {
     from.lines!.splice(idx, 1);
     from.annualAmount -= line.annualAmount;
     retag(from);
-    const to = next[section][toKey];
+    // Cross-section moves cover e.g. capex found in R&M → belowNoi.
+    const to = next[toSection ?? section][toKey];
     if (!to) return;
     line.confirmed = true;
     line.confidence = "high";
@@ -477,7 +520,7 @@ export default function AnalysisDetail({ id }: { id: string }) {
     await patchExtraction(next);
   }
 
-  async function excludeLine(section: "income" | "expenses", fromKey: string, idx: number) {
+  async function excludeLine(section: Section, fromKey: string, idx: number) {
     if (!data?.extractionParsed || mappingBusy) return;
     const next = structuredClone(data.extractionParsed);
     const from = next[section][fromKey];
@@ -513,7 +556,7 @@ export default function AnalysisDetail({ id }: { id: string }) {
     await patchExtraction(next);
   }
 
-  async function confirmLine(section: "income" | "expenses", key: string, idx: number) {
+  async function confirmLine(section: Section, key: string, idx: number) {
     if (!data?.extractionParsed || mappingBusy) return;
     const next = structuredClone(data.extractionParsed);
     const line = next[section][key].lines?.[idx];
@@ -522,10 +565,10 @@ export default function AnalysisDetail({ id }: { id: string }) {
     await patchExtraction(next);
   }
 
-  async function overrideLineItem(section: "income" | "expenses", key: string, current: number) {
+  async function overrideLineItem(section: Section, key: string, current: number) {
     if (!data?.extractionParsed) return;
     const raw = window.prompt(
-      `Override annual amount for "${(section === "income" ? INCOME_LABELS : EXPENSE_LABELS)[key]}" (currently ${money(current)}):`,
+      `Override annual amount for "${(section === "income" ? INCOME_LABELS : section === "belowNoi" ? BELOW_NOI_LABELS : EXPENSE_LABELS)[key] ?? key}" (currently ${money(current)}):`,
       String(current)
     );
     if (raw === null) return;
@@ -583,23 +626,21 @@ export default function AnalysisDetail({ id }: { id: string }) {
   );
   const otherIncomeTotal = incomeRows.reduce((sum, r) => sum + (r.monthly || 0), 0);
 
-  // Extraction coverage: which of the 13 statement lines the AI actually found.
+  // Extraction coverage over the core dictionary categories (the situational
+  // ones — pet income, snow removal, … — aren't gaps when absent).
   const coverage = (() => {
     if (!ex) return null;
-    const lines: { key: string; label: string; found: boolean }[] = [];
-    for (const [section, labels] of [
-      ["income", INCOME_LABELS],
-      ["expenses", EXPENSE_LABELS],
-    ] as const) {
-      for (const [key, lbl] of Object.entries(labels)) {
-        const item = ex[section][key];
-        if (!item) continue;
-        const found = item.annualAmount !== 0 || !/not\s*found/i.test(item.source);
-        lines.push({ key, label: lbl, found });
-      }
+    const missing: string[] = [];
+    for (const [section, key] of CORE_COVERAGE) {
+      const item = ex[section]?.[key];
+      const found = item && (item.annualAmount !== 0 || !/not\s*found/i.test(item.source));
+      if (!found) missing.push((section === "income" ? INCOME_LABELS : EXPENSE_LABELS)[key] ?? key);
     }
-    const missing = lines.filter((l) => !l.found);
-    return { total: lines.length, found: lines.length - missing.length, missing };
+    const mappedLines = (["income", "expenses", "belowNoi"] as const).reduce(
+      (n, sec) => n + Object.values(ex[sec] ?? {}).reduce((c, it) => c + (it.lines?.length ?? 0), 0),
+      0
+    );
+    return { total: CORE_COVERAGE.length, found: CORE_COVERAGE.length - missing.length, missing, mappedLines };
   })();
 
   // Upload sanity check: content type detected by the AI vs the label chosen.
@@ -951,8 +992,29 @@ export default function AnalysisDetail({ id }: { id: string }) {
           <h4 className="text-sm font-medium text-slate-500 mb-2">
             Approximate annual operating costs ($/year)
           </h4>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-3">
             {OPEX_FIELDS.map(([key, lbl]) => (
+              <div key={key}>
+                <label className="block text-xs font-medium mb-1">{lbl}</label>
+                <input
+                  name={`opex_${key}`} type="number" min="0" step="any"
+                  defaultValue={manualOpexDefaults[key] ?? ""}
+                  className={inputCls}
+                />
+              </div>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowAdvancedOpex(!showAdvancedOpex)}
+            className="text-sm text-blue-700 hover:underline mb-3"
+          >
+            {showAdvancedOpex ? "▾ Hide" : "▸ Show"} {OPEX_FIELDS_ADVANCED.length} more expense
+            categories (turnover, janitorial, security, legal…)
+          </button>
+          {/* Kept mounted (CSS-hidden) so collapsed values still save with the form. */}
+          <div className={showAdvancedOpex ? "grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4" : "hidden"}>
+            {OPEX_FIELDS_ADVANCED.map(([key, lbl]) => (
               <div key={key}>
                 <label className="block text-xs font-medium mb-1">{lbl}</label>
                 <input
@@ -997,41 +1059,22 @@ export default function AnalysisDetail({ id }: { id: string }) {
         </section>
       )}
 
-      {/* Extraction coverage + income basis (documents tab) */}
+      {/* Extraction coverage (documents tab) */}
       {tab === "documents" && ex && coverage && (
-        <section className={`${card} space-y-3`}>
+        <section className={card}>
           <div className="text-sm">
             <span className="font-semibold">Extraction coverage: </span>
-            {coverage.found} of {coverage.total} financial line items found in the documents
+            {coverage.mappedLines > 0 && <>{coverage.mappedLines} document lines classified · </>}
+            {coverage.found} of {coverage.total} core categories found
             {coverage.missing.length > 0 && (
               <>
                 {" · "}
-                <span className="text-amber-700">
-                  defaulted to $0: {coverage.missing.map((l) => l.label).join(", ")}
-                </span>
+                <span className="text-amber-700">defaulted to $0: {coverage.missing.join(", ")}</span>
               </>
             )}
-            . Every $0 line lowers or skews the results below — click a value in Extracted
-            financials to fill gaps manually.
-          </div>
-          <div className="flex flex-wrap items-center gap-3 text-sm border-t border-slate-100 pt-3">
-            <span className="font-semibold">Income basis:</span>
-            {(
-              [
-                ["actual", "Actual collections (what the T-12 shows was collected)"],
-                ["scheduled", "Scheduled rent − vacancy (the Excel-calculator convention)"],
-              ] as const
-            ).map(([value, label]) => (
-              <label key={value} className="flex items-center gap-1.5 cursor-pointer">
-                <input
-                  type="radio"
-                  name="incomeBasis"
-                  checked={(data.incomeBasis === "scheduled" ? "scheduled" : "actual") === value}
-                  onChange={() => setIncomeBasis(value)}
-                />
-                {label}
-              </label>
-            ))}
+            . Every $0 core category lowers or skews the results below — click a value in Extracted
+            financials to fill gaps manually. Income = base rent − vacancy − bad debt − concessions
+            + other income (the classification dictionary convention).
           </div>
         </section>
       )}
@@ -1108,13 +1151,19 @@ export default function AnalysisDetail({ id }: { id: string }) {
               value={money(m.base.effectiveGrossIncome)}
               info={
                 m.dataSource === "documents"
-                  ? m.incomeBasis === "scheduled"
-                    ? "Scheduled rent − vacancy + other income (basis switchable above)."
-                    : "Actual collected rent from the T-12 + other income (basis switchable above)."
+                  ? "Base rent − vacancy − bad debt − concessions + other income (dictionary convention)."
                   : `Unit-mix rent − ${data.vacancyAssumption ?? 5}% vacancy + other income.`
               }
             />
-            <Stat label="Operating expenses" value={money(m.base.totalOperatingExpenses)} />
+            <Stat
+              label="Operating expenses"
+              value={money(m.base.totalOperatingExpenses)}
+              info={
+                m.belowNoiTotal > 0
+                  ? `Operating expenses only. ${money(m.belowNoiTotal)} of below-NOI items (capex, debt service, D&A…) found in the documents are deliberately excluded — see Extracted financials.`
+                  : undefined
+              }
+            />
             <Stat
               label="Annual debt service"
               value={money(m.base.annualDebtService)}
@@ -1335,12 +1384,10 @@ export default function AnalysisDetail({ id }: { id: string }) {
             </table>
           </div>
           <p className="text-xs text-slate-500 mt-3">
-            Documents column uses{" "}
-            {data.metricsDocuments.incomeBasis === "scheduled"
-              ? "scheduled rent − vacancy (Excel convention)"
-              : "actual collected rent"}
-            ; the manual column always uses your unit-mix rent − vacancy assumption. Income basis is
-            switchable on the Uploaded documents tab.
+            Both columns use the dictionary convention: base rent − vacancy − bad debt − concessions
+            + other income (the manual column&apos;s vacancy comes from your vacancy assumption).
+            Below-NOI items found in the documents (capex, debt service, D&amp;A…) are excluded from
+            both columns.
             {ex &&
               (ex.excluded?.length ||
                 Object.values({ ...ex.income, ...ex.expenses }).some(
@@ -1614,17 +1661,38 @@ export default function AnalysisDetail({ id }: { id: string }) {
               [
                 ["Income", "income", INCOME_LABELS],
                 ["Expenses", "expenses", EXPENSE_LABELS],
+                ["Below NOI — reported, never in NOI", "belowNoi", BELOW_NOI_LABELS],
               ] as const
-            ).map(([title, section, labels]) => (
+            ).map(([title, section, labels]) => {
+              // Below NOI (and any group) disappears entirely when no category
+              // in it would render — no headline over an empty table.
+              const hasVisibleRows = Object.keys(labels).some((key) => {
+                const item = ex[section]?.[key];
+                if (!item) return false;
+                if (item.annualAmount !== 0 || (item.lines?.length ?? 0) > 0) return true;
+                return section !== "belowNoi";
+              });
+              if (!hasVisibleRows) return null;
+              return (
               <div key={section}>
                 <h3 className="text-sm font-medium text-slate-500 mb-2">{title} (annual)</h3>
                 <table className="w-full text-sm">
                   <tbody>
                     {Object.entries(labels).map(([key, lbl]) => {
-                      const item = ex[section][key];
+                      const item = ex[section]?.[key];
                       if (!item) return null;
-                      const catId = `${section}.${key}`;
                       const lines = item.lines ?? [];
+                      // Keep the tables readable: situational categories only
+                      // appear once the documents (or a re-map) put something in them.
+                      const alwaysShow =
+                        section === "income"
+                          ? ["grossPotentialRent", "vacancyLoss"].includes(key)
+                          : section === "expenses"
+                            ? ["propertyTaxes", "insurance", "utilities", "repairsMaintenance",
+                               "managementFees", "payroll", "landscaping", "administrative", "other"].includes(key)
+                            : false;
+                      if (!alwaysShow && item.annualAmount === 0 && lines.length === 0) return null;
+                      const catId = `${section}.${key}`;
                       const unconfirmedLow = lines.filter((l) => l.confidence === "low" && !l.confirmed).length;
                       const open = expandedCats[catId];
                       return (
@@ -1691,16 +1759,35 @@ export default function AnalysisDetail({ id }: { id: string }) {
                                     onChange={(e) => {
                                       const v = e.target.value;
                                       if (v === "__exclude__") excludeLine(section, key, idx);
-                                      else if (v) moveLine(section, key, idx, v);
+                                      else if (v) {
+                                        const [toSec, toKey] = v.split(":") as [Section, string];
+                                        moveLine(section, key, idx, toKey, toSec);
+                                      }
                                     }}
                                   >
                                     <option value="">Move to…</option>
-                                    {Object.entries(labels)
-                                      .filter(([k]) => k !== key)
-                                      .map(([k, l]) => (
-                                        <option key={k} value={k}>
-                                          {l}
-                                        </option>
+                                    {(
+                                      [
+                                        ["Income", "income", INCOME_LABELS],
+                                        ["Expenses", "expenses", EXPENSE_LABELS],
+                                        ["Below NOI (excluded)", "belowNoi", BELOW_NOI_LABELS],
+                                      ] as const
+                                    )
+                                      // Income lines stay within income; expense and
+                                      // below-NOI lines can cross between those two groups.
+                                      .filter(([, sec]) =>
+                                        section === "income" ? sec === "income" : sec !== "income"
+                                      )
+                                      .map(([groupLabel, sec, groupLabels]) => (
+                                        <optgroup key={sec} label={groupLabel}>
+                                          {Object.entries(groupLabels)
+                                            .filter(([k]) => !(sec === section && k === key) && k !== "actualCollectedRent")
+                                            .map(([k, l]) => (
+                                              <option key={`${sec}:${k}`} value={`${sec}:${k}`}>
+                                                {l}
+                                              </option>
+                                            ))}
+                                        </optgroup>
                                       ))}
                                     <option value="__exclude__">Exclude from analysis</option>
                                   </select>
@@ -1713,7 +1800,8 @@ export default function AnalysisDetail({ id }: { id: string }) {
                   </tbody>
                 </table>
               </div>
-            ))}
+              );
+            })}
           </div>
           {ex.excluded && ex.excluded.length > 0 && (
             <div className="mt-4">
@@ -1722,7 +1810,11 @@ export default function AnalysisDetail({ id }: { id: string }) {
                 {ex.excluded.map((line, i) => (
                   <li key={i}>
                     “{line.label}” · {money(line.annualAmount)} (was{" "}
-                    {(line.fromSection === "income" ? INCOME_LABELS : EXPENSE_LABELS)[line.fromKey] ?? line.fromKey})
+                    {(line.fromSection === "income"
+                      ? INCOME_LABELS
+                      : line.fromSection === "belowNoi"
+                        ? BELOW_NOI_LABELS
+                        : EXPENSE_LABELS)[line.fromKey] ?? line.fromKey})
                     <button
                       onClick={() => restoreLine(i)}
                       disabled={mappingBusy}

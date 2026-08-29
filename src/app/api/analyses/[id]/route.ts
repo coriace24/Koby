@@ -114,14 +114,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       ? items.reduce((s: number, r: { monthly: number }) => s + r.monthly, 0)
       : null;
   }
-  // Documents-mode income convention: actual collections (default) vs scheduled − vacancy.
-  if ("incomeBasis" in b) {
-    if (b.incomeBasis === "scheduled" || b.incomeBasis === "actual" || b.incomeBasis === null) {
-      data.incomeBasis = b.incomeBasis === "actual" ? null : b.incomeBasis;
-    } else {
-      return NextResponse.json({ error: "incomeBasis must be \"actual\" or \"scheduled\"." }, { status: 400 });
-    }
-  }
+  // incomeBasis was retired by the classification-dictionary restructure: the
+  // income convention is now always base rent − reductions + other income.
 
   const updated = await prisma.analysis.update({ where: { id }, data, include: { documents: true } });
   const extraction = parseExtraction(updated);

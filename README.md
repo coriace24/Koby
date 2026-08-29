@@ -14,8 +14,8 @@ decisions.
 - **Accounts & dashboard** — email/password login; portfolio snapshot (deals, units,
   combined value, average cap rate and cash flow) plus analysis status tracking.
 - **Deal calculator (no documents needed)** — modeled on a proven investor Excel
-  calculator: unit-mix rent builder with NNN/utility fees, quick annual operating-cost
-  estimator, total-cash-needed (down payment + closing + carrying + renovation),
+  calculator: unit-mix rent builder, itemized other income, a 9-field quick expense
+  estimator (11 more dictionary categories expandable on demand), total-cash-needed (down payment + closing + carrying + renovation),
   cap-rate valuation matrix ("what is it worth at 6/7/8%?") vs asking price, and a
   what-if rent sensitivity table. Instant results; AI-extracted figures take over once
   documents are analyzed.
@@ -27,10 +27,13 @@ decisions.
   and free-form notes.
 - **Document upload** — rent roll and T-12 (required), plus offering memos, tax records,
   insurance, utility statements, leases, and financials. PDF, Excel, and CSV supported.
-- **AI document analysis** — Claude extracts income (GPR, collections, vacancy loss, other
-  income) and expenses (taxes, insurance, utilities, R&M, management, payroll, landscaping,
-  admin, other), cites the source of every figure, and flags incomplete or questionable data
-  (e.g. "utility expenses only include four months of data").
+- **AI document analysis** — Claude classifies every document line using a 36-category
+  Multifamily Financial Classification Dictionary: base rent with explicit reductions
+  (vacancy, bad debt, concessions), 8 itemized other-income types (RUBS never netted
+  against utilities), 20 operating-expense categories, and 5 below-NOI categories
+  (capex, TI, leasing commissions, debt service, D&A) that are reported but never
+  included in NOI. Every figure cites its source; incomplete or questionable data is
+  flagged.
 - **Underwriting engine** (deterministic, not AI) — NOI, cap rate, amortized debt service,
   DSCR, cash flow after debt, equity requirement, cash-on-cash return, expense ratio, and
   break-even occupancy.
@@ -51,9 +54,8 @@ decisions.
   pay-per-use billing at hosting time.
 - **Invite-only registration (optional)** — set `INVITE_CODE` to gate signups.
 - **Input transparency** — upload sanity check (AI flags files whose content doesn't
-  match their label before a full run), extraction coverage banner, switchable income
-  basis (actual collections vs scheduled − vacancy), manual-vs-documents reconciliation
-  table, and formula tooltips on every metric.
+  match their label before a full run), extraction coverage banner,
+  manual-vs-documents reconciliation table, and formula tooltips on every metric.
 - **Raw-line mapping ledger** — extraction preserves the document's original line
   labels verbatim under each category (owners label finances differently); expand any
   category to see its source lines, confirm low-confidence mappings, move lines
@@ -79,7 +81,7 @@ npm run dev
 
 Open http://localhost:3000, register an account, and create your first analysis.
 
-- `npm test` runs the underwriting-engine test suite (22 tests anchored to the reference
+- `npm test` runs the underwriting-engine test suite (24 tests anchored to the reference
   Excel calculator).
 - **No dev tools? Use the Windows desktop package instead** — see the companion
   [Application repo](https://github.com/coriace24/Application): extract a small starter

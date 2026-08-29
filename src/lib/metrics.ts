@@ -1,7 +1,9 @@
 import type { Analysis } from "@prisma/client";
-import type { Extraction } from "./ai";
+import { normalizeExtraction, INCOME_KEYS, type Extraction } from "./ai";
 import {
   underwrite,
+  emptyExpenses,
+  EXPENSE_KEYS,
   rentGrowth,
   renovationAnalysis,
   stabilized,
@@ -34,7 +36,7 @@ export interface MetricsOptions {
 
 export interface FullMetrics {
   dataSource: "documents" | "manual";
-  incomeBasis: "actual" | "scheduled"; // which income convention produced these numbers (documents mode)
+  belowNoiTotal: number; // capex/TI/LC/debt/D&A found in documents — excluded from NOI
   income: IncomeStatement;
   expenses: ExpenseStatement;
   base: UnderwritingResult;
@@ -52,7 +54,9 @@ export interface FullMetrics {
 export function parseExtraction(analysis: Analysis): Extraction | null {
   if (!analysis.extraction) return null;
   try {
-    return JSON.parse(analysis.extraction) as Extraction;
+    // Normalizing fills every dictionary category, so extractions stored
+    // before the dictionary restructure keep working.
+    return normalizeExtraction(JSON.parse(analysis.extraction));
   } catch {
     return null;
   }
@@ -68,58 +72,50 @@ export function parseUnitMix(analysis: Analysis): UnitMixRow[] {
   }
 }
 
-const EXPENSE_KEYS = [
-  "propertyTaxes", "insurance", "utilities", "repairsMaintenance", "managementFees",
-  "payroll", "landscaping", "administrative", "other",
-] as const;
+// The 8 income categories that add to income (the other 4 are base rent + reductions).
+const OTHER_INCOME_KEYS = INCOME_KEYS.filter(
+  (k) => !["grossPotentialRent", "vacancyLoss", "badDebt", "concessions"].includes(k)
+);
 
 export function parseManualOpex(analysis: Analysis): ExpenseStatement | null {
   if (!analysis.manualOpex) return null;
   try {
     const raw = JSON.parse(analysis.manualOpex) as Record<string, unknown>;
-    const out = {} as Record<string, number>;
+    const out = emptyExpenses();
     for (const k of EXPENSE_KEYS) {
       const v = raw[k];
       out[k] = typeof v === "number" && Number.isFinite(v) ? v : 0;
     }
-    return out as unknown as ExpenseStatement;
+    return out;
   } catch {
     return null;
   }
 }
 
-function fromExtraction(
-  extraction: Extraction,
-  incomeBasis: "actual" | "scheduled",
-  vacancyPct: number
-): { income: IncomeStatement; expenses: ExpenseStatement } {
-  const gpr = extraction.income.grossPotentialRent.annualAmount;
-  const extractedVacancy = extraction.income.vacancyLoss.annualAmount;
-  // "scheduled" reproduces the Excel convention: scheduled rent less vacancy.
-  // Zeroing actual collections makes the engine fall back to GPR − vacancyLoss;
-  // when the documents had no vacancy line, apply the vacancy % assumption.
-  // If GPR itself wasn't extracted, the scheduled basis has nothing to stand on —
-  // fall back to actual collections rather than collapsing income to zero.
-  const scheduled = incomeBasis === "scheduled" && gpr > 0;
-  return {
-    income: {
-      grossPotentialRent: gpr,
-      actualCollectedRent: scheduled ? 0 : extraction.income.actualCollectedRent.annualAmount,
-      vacancyLoss: scheduled && extractedVacancy <= 0 ? gpr * (vacancyPct / 100) : extractedVacancy,
-      otherIncome: extraction.income.otherIncome.annualAmount,
-    },
-    expenses: {
-      propertyTaxes: extraction.expenses.propertyTaxes.annualAmount,
-      insurance: extraction.expenses.insurance.annualAmount,
-      utilities: extraction.expenses.utilities.annualAmount,
-      repairsMaintenance: extraction.expenses.repairsMaintenance.annualAmount,
-      managementFees: extraction.expenses.managementFees.annualAmount,
-      payroll: extraction.expenses.payroll.annualAmount,
-      landscaping: extraction.expenses.landscaping.annualAmount,
-      administrative: extraction.expenses.administrative.annualAmount,
-      other: extraction.expenses.other.annualAmount,
-    },
+function fromExtraction(extraction: Extraction): {
+  income: IncomeStatement;
+  expenses: ExpenseStatement;
+} {
+  const income: IncomeStatement = {
+    baseRent: extraction.income.grossPotentialRent.annualAmount,
+    vacancyLoss: extraction.income.vacancyLoss.annualAmount,
+    badDebt: extraction.income.badDebt.annualAmount,
+    concessions: extraction.income.concessions.annualAmount,
+    otherIncome: OTHER_INCOME_KEYS.reduce((s, k) => s + extraction.income[k].annualAmount, 0),
   };
+  // Pre-dictionary extractions carry collected rent; it overrides the
+  // reduction math so old analyses keep their numbers until re-run.
+  const legacy = extraction.income.actualCollectedRent?.annualAmount ?? 0;
+  if (legacy > 0) income.legacyActualCollected = legacy;
+
+  const expenses = emptyExpenses();
+  for (const k of EXPENSE_KEYS) expenses[k] = extraction.expenses[k].annualAmount;
+  return { income, expenses };
+}
+
+export function belowNoiTotalOf(extraction: Extraction | null): number {
+  if (!extraction) return 0;
+  return Object.values(extraction.belowNoi).reduce((s, it) => s + (it?.annualAmount || 0), 0);
 }
 
 function fromManual(analysis: Analysis): { income: IncomeStatement; expenses: ExpenseStatement } | null {
@@ -130,16 +126,13 @@ function fromManual(analysis: Analysis): { income: IncomeStatement; expenses: Ex
   const monthlyRent = unitMixMonthlyRent(mix);
   const vacancyPct = analysis.vacancyAssumption ?? 5;
   const income: IncomeStatement = {
-    grossPotentialRent: monthlyRent * 12,
-    actualCollectedRent: 0, // engine falls back to GPR - vacancy
+    baseRent: monthlyRent * 12,
     vacancyLoss: monthlyRent * 12 * (vacancyPct / 100),
+    badDebt: 0,
+    concessions: 0,
     otherIncome: (analysis.otherIncomeMonthly ?? 0) * 12,
   };
-  const expenses: ExpenseStatement = opex ?? {
-    propertyTaxes: 0, insurance: 0, utilities: 0, repairsMaintenance: 0, managementFees: 0,
-    payroll: 0, landscaping: 0, administrative: 0, other: 0,
-  };
-  return { income, expenses };
+  return { income, expenses: opex ?? emptyExpenses() };
 }
 
 export function computeMetrics(
@@ -148,23 +141,18 @@ export function computeMetrics(
   opts: MetricsOptions = {}
 ): FullMetrics | null {
   const wanted = opts.source ?? "auto";
-  const incomeBasis: "actual" | "scheduled" =
-    analysis.incomeBasis === "scheduled" ? "scheduled" : "actual";
-  const vacancyPct = analysis.vacancyAssumption ?? 5;
   let source: "documents" | "manual";
   let statements: { income: IncomeStatement; expenses: ExpenseStatement } | null;
   if (wanted === "documents") {
     source = "documents";
-    statements = extraction ? fromExtraction(extraction, incomeBasis, vacancyPct) : null;
+    statements = extraction ? fromExtraction(extraction) : null;
   } else if (wanted === "manual") {
     source = "manual";
     statements = fromManual(analysis);
   } else {
     // auto: documents win when analyzed; otherwise fall back to the manual deal calculator
     source = extraction ? "documents" : "manual";
-    statements = extraction
-      ? fromExtraction(extraction, incomeBasis, vacancyPct)
-      : fromManual(analysis);
+    statements = extraction ? fromExtraction(extraction) : fromManual(analysis);
   }
   if (!statements) return null;
 
@@ -197,7 +185,7 @@ export function computeMetrics(
 
   const avgRent =
     (extraction?.rentRoll.averageRentPerUnit || 0) ||
-    (analysis.units > 0 ? income.grossPotentialRent / analysis.units / 12 : 0);
+    (analysis.units > 0 ? income.baseRent / analysis.units / 12 : 0);
 
   const growth =
     analysis.marketRentPerUnit && analysis.marketRentPerUnit > 0
@@ -240,7 +228,7 @@ export function computeMetrics(
 
   return {
     dataSource: source,
-    incomeBasis,
+    belowNoiTotal: source === "documents" ? belowNoiTotalOf(extraction) : 0,
     income,
     expenses,
     base,

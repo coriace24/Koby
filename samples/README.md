@@ -81,17 +81,20 @@ Click **Run AI analysis** and wait 1–3 minutes. Expected results:
   vacant unit), risks to investigate, and key assumptions. Per design, it never says
   "this is a good investment" — it reports what the numbers show.
 
-### 4b. Coverage, income basis, and reconciliation (new)
+### 4b. Coverage, classification, and reconciliation
 
-After the AI run, three transparency features appear:
+The app classifies every document line using the Multifamily Financial Classification
+Dictionary (36 categories). After the AI run:
 
-- **Extraction coverage** (top of results): "12 of 13 financial line items found ·
-  defaulted to $0: Payroll" — instantly explains any gap between the app's numbers and
-  your own calculations.
-- **Income basis** toggle: *Actual collections* (default — what the T-12 shows was
-  really collected) vs *Scheduled rent − vacancy* (the Excel-calculator convention).
-  Flip it and every metric recomputes; this is the main reason document results differ
-  from a hand-filled calculator.
+- **Extraction coverage** (top of results): "N document lines classified · 7 of 8 core
+  categories found · defaulted to $0: Payroll" — instantly explains any gap between the
+  app's numbers and your own calculations.
+- **Income convention** (fixed, no toggle): effective income = base rent − vacancy −
+  bad debt − concessions + other income (late fees, parking, laundry, RUBS, … each its
+  own category). Utility reimbursements are never netted against utility expense.
+- **Below NOI**: capex, tenant improvements, leasing commissions, debt service, and
+  D&A found in documents are reported separately and *never* included in NOI — they
+  appear in Extracted financials and on the PDF as deliberate exclusions.
 - **Manual vs documents reconciliation**: once you've saved deal-calculator inputs AND
   run a document analysis, a side-by-side table shows both sets of numbers with
   differences — assumptions vs actuals on one screen.

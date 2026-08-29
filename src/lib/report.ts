@@ -4,6 +4,7 @@ import PDFDocument from "pdfkit";
 import type { Analysis } from "@prisma/client";
 import type { AiSummary, Extraction } from "./ai";
 import type { FullMetrics } from "./metrics";
+import { BELOW_NOI_LABELS } from "./underwriting";
 
 export interface ReportBranding {
   companyName?: string | null;
@@ -123,6 +124,29 @@ export function buildReportPdf(
     kv("Cash Flow After Debt Service", money(metrics.base.cashFlowAfterDebtService));
     kv("Cash-on-Cash Return", pct(metrics.base.cashOnCashReturn));
     kv("Break-even Occupancy", pct(metrics.base.breakEvenOccupancy, 1));
+
+    // Below-NOI items found in the documents — shown so readers see the
+    // exclusions were deliberate, per the classification dictionary.
+    if (extraction) {
+      const belowNoiLabels: Record<string, string> = BELOW_NOI_LABELS;
+      const belowNoi = Object.entries(extraction.belowNoi ?? {}).filter(
+        ([, it]) => it && it.annualAmount !== 0
+      );
+      if (belowNoi.length > 0) {
+        doc.moveDown(0.4);
+        doc.font("Helvetica-Bold").text("Below NOI — Excluded from Operating Results");
+        doc
+          .font("Helvetica-Oblique")
+          .fontSize(9)
+          .text(
+            "The following items were found in the documents but are capital/financing items, not operating expenses. They are reported for completeness and deliberately excluded from NOI."
+          );
+        doc.font("Helvetica").fontSize(10);
+        for (const [key, it] of belowNoi) {
+          kv(belowNoiLabels[key] ?? key, money(it.annualAmount));
+        }
+      }
+    }
 
     doc.moveDown(0.4);
     doc.font("Helvetica-Bold").text("Valuation at Selected Cap Rates");
