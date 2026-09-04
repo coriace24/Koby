@@ -2630,3 +2630,28 @@ All green. Shipping — commit, rebuild desktop package, push both repos, update
 ----- CLAUDE  (2026-08-29 09:46 UTC) -----
 The container recycle also wiped `desktop/node_modules` — reinstalling and rebuilding:
 
+----- CLAUDE  (2026-08-29 09:49 UTC) -----
+Merge-safe export works — full history restored (217 archived + 18 new = 235, spanning July 17 to today). Committing:
+The dictionary restructure is complete, audited, verified, and shipped to both repos. Here's the full picture:
+
+## What the app now does (Dictionary V1)
+
+**Income — 12 categories.** Base rent stands alone, with vacancy, bad debt, and concessions as explicit *reductions* (items 1–4), and eight itemized other-income types: late fees, application fees, pet, parking, laundry, storage, utility reimbursement, misc. Effective income = base rent − reductions + other income. **RUBS is never netted against utility expense** (rule 11), and unclear misc income gets flagged (rule 12).
+
+**Expenses — 20 categories.** Your original 9 plus turnover, snow removal, janitorial, pest control, security, marketing, legal, accounting, office/supplies, bank fees, licenses/permits. The dictionary's special rules are enforced in the AI's instructions: Property management ≠ Payroll (13/14), Administrative is a high-review category the AI must never auto-merge (15), turnover/snow may fold into R&M/landscaping only when documents combine them (17/22), and non-operating legal gets flagged (27).
+
+**Below NOI — 5 categories, the "what NOT to put into NOI" section (32–36).** CapEx (including reserves), tenant improvements, leasing commissions, debt service, D&A are extracted, shown in the app, and printed on the PDF under *"Below NOI — Excluded from Operating Results"* with a note that the exclusion is deliberate — but they never touch NOI or opex. Verified live: $89,800 of capex+debt service correctly reported and excluded.
+
+**Your three decisions implemented:** the income-basis toggle is retired (old analyses keep their numbers until re-run — the engine honors legacy collected-rent extractions); the calculator keeps its 9 Excel fields with the other 11 behind *"Show 11 more expense categories"* (hidden values still save); below-NOI appears on the investor PDF — I rendered one and read it back to confirm.
+
+## Proof nothing broke
+
+Excel Test B parity re-verified through the live API to the cent · 24 engine tests (2 new dictionary cases) · legacy extraction compatibility, dictionary EGI formula, 20-category opex, and below-NOI exclusion all smoke-tested with exact expected numbers · **audit found 6 defects and all were fixed pre-commit** (the worst: two ways legacy analyses could lose data during re-mapping).
+
+**Also: your chat backup had a near-miss.** The infrastructure truncated the session transcript, and the regenerating export silently shrank your archive from 217 to 127 messages. I caught it, restored the full history from git, and rewrote the exporter to be **append-only** — it can never lose archived messages again (now 235 messages, July 17 → today).
+
+**To test:** Codespaces: pull → `npx prisma@6.19.3 db push` → restart. PC: new `app.zip` into the starter folder. Then **re-run the AI analysis** on any property — old runs show legacy numbers until re-run, and the new run will show the full classification. The test kit's section 4b describes the updated expectations.
+
+----- USER  (2026-09-04 00:03 UTC) -----
+how can i re apply the api for this projet
+
