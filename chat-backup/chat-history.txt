@@ -2655,3 +2655,70 @@ Excel Test B parity re-verified through the live API to the cent · 24 engine te
 ----- USER  (2026-09-04 00:03 UTC) -----
 how can i re apply the api for this projet
 
+----- CLAUDE  (2026-09-04 00:04 UTC) -----
+Here's how to (re)apply your Anthropic API key, depending on where you're running Koby. First, if you need a fresh key: [console.anthropic.com](https://console.anthropic.com) → **API keys** → Create key (copy it immediately — it's shown only once; it starts with `sk-ant-`).
+
+## On the PC (desktop package) — two ways
+
+**Easy way — the setup page:**
+1. Start Koby (`Start Koby.bat`), then open **http://localhost:3210/setup** in your browser.
+2. Paste the key → **Save key & continue**. It's stored in `Documents\Koby\.env` and takes effect immediately — no restart needed.
+
+**Manual way:** open `Documents\Koby\.env` in Notepad and add or edit this line (with quotes):
+```
+ANTHROPIC_API_KEY="sk-ant-your-key-here"
+```
+Save, then close the Koby console window and double-click `Start Koby.bat` again (the manual edit needs a restart to load).
+
+## In Codespaces
+
+Your key lives in a **Codespaces secret**, so it survives rebuilds:
+1. Go to [github.com/settings/codespaces](https://github.com/settings/codespaces) → **Secrets** → find `ANTHROPIC_API_KEY` → **Update** (or **New secret** with exactly that name, granted to the **Koby** repository).
+2. If your Codespace is already running, the new value isn't picked up automatically — either restart the Codespace (Command Palette → "Codespaces: Stop Current Codespace", then reopen), or for a quick session-only fix run in the terminal:
+   ```bash
+   export ANTHROPIC_API_KEY="sk-ant-your-key-here"
+   npm run dev
+   ```
+
+## Local dev on a computer (running `npm run dev` directly)
+
+Edit the `.env` file in the project folder — same `ANTHROPIC_API_KEY="sk-ant-…"` line — then stop (`Ctrl+C`) and restart `npm run dev`.
+
+## How to verify it worked
+
+Open any analysis and click **Run AI analysis** (or upload a document — the upload sanity check also uses the key). If the key is wrong or missing you'll see a clear error ("authentication" or "not configured"); if you instead see **"credit balance is too low"**, the key is fine but the Anthropic account needs API credits topped up at console.anthropic.com → Plans & Billing.
+
+One note: the key is never stored in the app's database or repos — only in the `.env` file (or Codespaces secret) of each environment, which is why each environment needs it applied separately.
+
+----- USER  (2026-09-18 20:32 UTC) -----
+make the app an .exe  and portable to be run on a different pc
+
+----- CLAUDE  (2026-09-18 20:33 UTC) -----
+Good timing for this — the pieces already exist (Koby.exe + the payload), so what's missing is a true **portable mode**: run from any folder (USB stick included), keep all data *inside that folder*, and survive being copied to a different PC. I'll add it properly, because there's one real portability bug lurking: uploaded documents are stored with absolute paths, which break when the folder moves between machines. Plan: portable marker in the launcher, relative storage keys, a `KobyPortable.zip` build, test, audit, ship.
+
+----- CLAUDE  (2026-09-18 20:34 UTC) -----
+Now the portability bug fix — uploaded documents must be stored with relative keys so the folder can move between PCs:
+Now the build script produces `KobyPortable.zip`:
+
+----- CLAUDE  (2026-09-18 20:38 UTC) -----
+`app.zip` doubled to 161MB — over GitHub's limit. The fresh `npm install` must have brought artifacts my prune patterns miss. Diagnosing:
+`server/` is 224MB but its node_modules only 53MB — something else inside ballooned:
+
+----- CLAUDE  (2026-09-18 20:40 UTC) -----
+All four artifacts, correct sizes. Now the portable end-to-end test — including the "different PC" simulation (moving the folder after data exists):
+The move test passed but the upload test tripped earlier — let me see the actual error against the running (moved) instance:
+
+----- CLAUDE  (2026-09-18 20:41 UTC) -----
+All verified: relative keys, and a document uploaded on "PC A" correctly resolved after the data moved to "PC B". Mandatory audit before commit:
+
+----- CLAUDE  (2026-09-18 20:44 UTC) -----
+Two real findings — fixing both:
+Now the same-data-store detection (port file per install, instead of a blind port-3210 probe):
+
+----- CLAUDE  (2026-09-18 20:46 UTC) -----
+Re-testing the portable flow with the audit fixes (fresh run, double-launch reuse, and the folder move):
+
+----- CLAUDE  (2026-09-18 20:47 UTC) -----
+The core flows pass; the empty port file was my test racing the launcher's own readiness poll. Re-running with proper waits:
+All audit fixes verified (the Exit 1 is just my hard-killed background test instance). Now docs and shipping. First CLAUDE.md and the Application README:
+
