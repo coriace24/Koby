@@ -12,8 +12,11 @@ NODE_VERSION="${KOBY_NODE_VERSION:-22.14.0}"
 VERSION="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo dev)-$(date -u +%Y%m%d%H%M)"
 
 echo "==> Building Koby desktop package (version $VERSION)"
-mkdir -p "$DIST" "$CACHE"
-rm -rf "$PAYLOAD" "$DIST/app.zip"
+mkdir -p "$CACHE"
+# Wipe dist BEFORE the Next build: standalone output-file-tracing copies repo
+# folders it deems reachable, and a stale dist/ (with the previous exe + zips)
+# gets swallowed into .next/standalone, doubling app.zip.
+rm -rf "$DIST" "$ROOT/.next"
 mkdir -p "$PAYLOAD"
 
 echo "==> 1/7 Next.js standalone build"
@@ -28,6 +31,11 @@ mkdir -p "$PAYLOAD/server"
 cp -r "$ROOT/.next/standalone/." "$PAYLOAD/server/"
 mkdir -p "$PAYLOAD/server/.next/static"
 cp -r "$ROOT/.next/static/." "$PAYLOAD/server/.next/static/"
+# Belt and suspenders: repo folders the tracer may have copied are not runtime.
+rm -rf "$PAYLOAD/server/dist" "$PAYLOAD/server/src" "$PAYLOAD/server/chat-backup" \
+       "$PAYLOAD/server/samples" "$PAYLOAD/server/desktop" "$PAYLOAD/server/uploads" \
+       "$PAYLOAD/server/prisma/dev.db" "$PAYLOAD/server/package-lock.json" \
+       "$PAYLOAD/server/tsconfig.tsbuildinfo" "$PAYLOAD/server/CLAUDE.md" 2>/dev/null || true
 [ -d "$ROOT/public" ] && cp -r "$ROOT/public" "$PAYLOAD/server/public"
 # Make sure the generated Prisma client (with the windows query engine) is present
 mkdir -p "$PAYLOAD/server/node_modules/.prisma"
@@ -101,6 +109,16 @@ cp "$ROOT/desktop/start-koby.bat" "$STARTER/Start Koby.bat"
 cp "$PAYLOAD/node/node.exe" "$STARTER/node/node.exe"
 cp -r "$ROOT/desktop/node_modules/adm-zip" "$STARTER/node_modules/adm-zip"
 ( cd "$STARTER" && zip -q -9 -r "$DIST/KobyStarter.zip" . )
+
+# KobyPortable.zip: the starter plus a portable-mode marker. Extract anywhere
+# (USB stick ok), drop app.zip inside, run Start Koby.bat — the app AND all data
+# (database, uploads, API key) stay in the folder, which can be copied to any
+# other Windows PC and keeps working with the same data.
+rm -f "$DIST/KobyPortable.zip"
+printf 'portable\r\n' > "$STARTER/portable.mode"
+printf 'KOBY PORTABLE\r\n=============\r\n\r\n1. Put app.zip (still zipped) in this folder, next to Start Koby.bat.\r\n2. Double-click "Start Koby.bat" (Windows warning: More info -> Run anyway).\r\n3. Everything lives in the KobyData folder created here: database, uploaded\r\n   documents, and your API key. Nothing is installed on the PC itself.\r\n4. To move to another PC or USB stick: close Koby, copy this WHOLE folder,\r\n   run Start Koby.bat there. Your accounts and analyses travel with it.\r\n5. To update: replace app.zip with a newer one and start Koby again.\r\n\r\nDo not delete portable.mode - it is what keeps Koby inside this folder.\r\n\r\nSECURITY: the Anthropic API key is NOT inside the .exe or app.zip - it is\r\nsaved in KobyData\\.env after you enter it on the setup page, so it travels\r\nWITH this folder. Only hand the folder to people you trust with that key\r\n(or delete KobyData\\.env first and let them enter their own key).\r\n' > "$STARTER/PORTABLE-README.txt"
+( cd "$STARTER" && zip -q -9 -r "$DIST/KobyPortable.zip" . )
+rm -f "$STARTER/portable.mode" "$STARTER/PORTABLE-README.txt"
 cd "$ROOT/desktop"
 [ -d node_modules ] || npm install --no-audit --no-fund --silent
 # --no-bytecode/--public embed plain JS source instead of compiled bytecode —
@@ -108,4 +126,4 @@ cd "$ROOT/desktop"
 npx pkg launcher.js --targets node22-win-x64 --no-bytecode --public --public-packages "*" --output "$DIST/Koby.exe"
 
 echo "==> Done:"
-ls -lh "$DIST/Koby.exe" "$DIST/app.zip" "$DIST/KobyStarter.zip"
+ls -lh "$DIST/Koby.exe" "$DIST/app.zip" "$DIST/KobyStarter.zip" "$DIST/KobyPortable.zip"

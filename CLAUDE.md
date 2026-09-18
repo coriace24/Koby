@@ -16,8 +16,8 @@ Also before committing:
 ## Standing sync duties (every push to this repo)
 
 1. Rebuild the Windows package (`bash desktop/build.sh`) and push
-   `app.zip` / `Koby.exe` / `KobyStarter.zip` + `VERSION.txt` to the
-   `coriace24/Application` repo.
+   `app.zip` / `Koby.exe` / `KobyStarter.zip` / `KobyPortable.zip` +
+   `VERSION.txt` to the `coriace24/Application` repo.
 2. Keep `samples/README.md` (the test kit) updated with any flow change.
 3. Regenerate the chat backup (`python3 chat-backup/export_chat.py`) and push it.
 

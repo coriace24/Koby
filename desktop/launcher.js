@@ -99,13 +99,19 @@ function documentsDir() {
   return fallback;
 }
 
-const installDir = path.join(documentsDir(), "Koby");
+// PORTABLE MODE: a "portable.mode" file next to the launcher keeps everything —
+// app, database, uploads, .env — inside this folder instead of Documents\Koby,
+// so the whole folder can be copied to another PC (or live on a USB stick) and
+// carry its data along. Nothing is written outside the folder.
+const IS_PORTABLE = fs.existsSync(path.join(selfDir, "portable.mode"));
+
+const installDir = IS_PORTABLE ? path.join(selfDir, "KobyData") : path.join(documentsDir(), "Koby");
 const appDir = path.join(installDir, "app");
 const dataDir = path.join(installDir, "data");
 const envFile = path.join(installDir, ".env");
 const dbFile = path.join(dataDir, "koby.db");
 const BASE_PORT = 3210;
-writeLog(`Install dir resolved to: ${installDir}`);
+writeLog(`Install dir resolved to: ${installDir}${IS_PORTABLE ? " (PORTABLE MODE)" : ""}`);
 
 // If an earlier version installed to the naive (non-redirected) Documents path,
 // move it to the real one so accounts/analyses are kept and no orphan is left.
@@ -197,7 +203,15 @@ function installFromFolder() {
   );
   fs.rmSync(appDir, { recursive: true, force: true });
   fs.mkdirSync(appDir, { recursive: true });
-  fs.cpSync(selfDir, appDir, { recursive: true });
+  // Copy entry by entry: in portable mode appDir lives INSIDE selfDir
+  // (KobyData/app), and a whole-folder cpSync would both throw
+  // ERR_FS_CP_EINVAL (copy into a subdirectory of self) and drag the live
+  // database + .env into the replaceable app folder.
+  const SKIP = new Set(["KobyData", "app.zip", "koby-launcher.log"]);
+  for (const entry of fs.readdirSync(selfDir)) {
+    if (SKIP.has(entry)) continue;
+    fs.cpSync(path.join(selfDir, entry), path.join(appDir, entry), { recursive: true });
+  }
   log("Install complete.");
 }
 
@@ -311,22 +325,33 @@ function pickPort(port, attempts, cb) {
   portFree(port, (free) => (free ? cb(port) : pickPort(port + 1, attempts - 1, cb)));
 }
 
+// THIS install's running server records its port here, so a second double-click
+// reuses the same data store — and a portable folder never gets confused with a
+// Documents\Koby instance that happens to occupy port 3210.
+const portFile = path.join(installDir, "port.txt");
+
 function alreadyRunning(cb) {
-  // A Koby server from a previous double-click may still be up — reuse it
-  // instead of silently starting a second server against the same database.
+  let recordedPort = 0;
+  try {
+    recordedPort = parseInt(fs.readFileSync(portFile, "utf8").trim(), 10);
+  } catch {}
+  if (!recordedPort || !Number.isFinite(recordedPort)) return cb(null);
   let settled = false;
-  const req = http.get({ host: "127.0.0.1", port: BASE_PORT, path: "/api/auth/config", timeout: 1500 }, (res) => {
-    res.resume();
-    res.on("end", () => req.destroy());
-    if (!settled) {
-      settled = true;
-      cb(true);
+  const req = http.get(
+    { host: "127.0.0.1", port: recordedPort, path: "/api/auth/config", timeout: 1500 },
+    (res) => {
+      res.resume();
+      res.on("end", () => req.destroy());
+      if (!settled) {
+        settled = true;
+        cb(recordedPort);
+      }
     }
-  });
+  );
   const no = () => {
     if (!settled) {
       settled = true;
-      cb(false);
+      cb(null); // stale port file — a crash left it behind; just start normally
     }
   };
   req.on("error", no);
@@ -341,9 +366,9 @@ function start() {
   console.log("  Koby — AI Real Estate Underwriting (local)");
   console.log("==============================================\n");
 
-  alreadyRunning((running) => {
-    if (running) {
-      const target = `http://localhost:${BASE_PORT}/`;
+  alreadyRunning((runningPort) => {
+    if (runningPort) {
+      const target = `http://localhost:${runningPort}/`;
       log(`Koby is already running in another window — opening ${target}`);
       log("This window will close; keep the original Koby window open.");
       if (process.platform === "win32") {
@@ -357,7 +382,12 @@ function start() {
 }
 
 function runInstallAndServe() {
-  migrateLegacyInstall();
+  if (IS_PORTABLE) {
+    log("PORTABLE MODE — the app and all your data stay inside this folder (KobyData).");
+    log("Copy the whole folder to another PC or a USB stick and it runs there with your data.");
+  } else {
+    migrateLegacyInstall();
+  }
   // The launcher extracts app.zip itself (much faster than Windows Explorer for
   // thousands of small files). Only the extracted-folder fallback needs app.zip
   // to have been unpacked manually.
@@ -393,8 +423,14 @@ function runInstallAndServe() {
       process.stderr.write(d);
       writeLog(String(d).trimEnd());
     });
+    const clearPortFile = () => {
+      try {
+        fs.unlinkSync(portFile);
+      } catch {}
+    };
     child.on("error", (e) => fail(`Could not start the bundled Node runtime: ${e.message}`));
     child.on("exit", (code) => {
+      clearPortFile();
       if (code !== 0) fail(`The server stopped unexpectedly (code ${code}). See messages above.`);
       process.exit(0);
     });
@@ -404,6 +440,9 @@ function runInstallAndServe() {
       if (!ok) return fail("The server did not respond within 60 seconds.");
       if (browserOpened) return;
       browserOpened = true;
+      try {
+        fs.writeFileSync(portFile, String(port), "utf8");
+      } catch {}
       const target = envVars.ANTHROPIC_API_KEY
         ? `http://localhost:${port}/`
         : `http://localhost:${port}/setup`;
@@ -416,6 +455,7 @@ function runInstallAndServe() {
 
     process.on("SIGINT", () => {
       log("Stopping…");
+      clearPortFile();
       child.kill();
       process.exit(0);
     });
